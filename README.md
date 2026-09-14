@@ -13,6 +13,8 @@ chmod +x ./iterauthor
 
 `--demo` uses marked synthetic replies and makes **no network calls**. It exercises the workflow, but cannot evaluate writing quality. Reopen with `./iterauthor --demo ~/iterauthor-trial`; omit `--new` when reopening.
 
+The project directory is optional and defaults to the current working directory. Run `iterauthor` from inside an existing project to open it, or `iterauthor --new` in an empty directory to create one. An explicit path opens a project elsewhere.
+
 For real writing, omit `--demo`, then configure a connection under **Settings → Models**. The adapter uses OpenAI-compatible Chat Completions endpoints. The selected model must actually support tools for context selection and consistency review; **Test base tools** checks a real tool round trip.
 
 ## What you can try

@@ -21,6 +21,8 @@ Release artifacts built successfully with `CGO_ENABLED=0` and `-trimpath`. The `
 
 `python3 scripts/smoke-pty.py dist/iterauthor` passed against the compiled native app through a Unix pseudo-terminal with `TERM=xterm-256color`. It used actual SGR mouse reports to select a scene, open its editor, and place the caret inside the text; typed content was saved to the expected file. Command search and Help used modifier keys, and Ctrl+C exited successfully. The harness drains terminal output through exit and uses bounded waits. Python is a development-test dependency only.
 
+The same PTY interaction journey also passed with a zero-argument launch from an existing project directory. CLI checks covered creation and validation using the current directory, an explicit path overriding the current directory, optional-directory help text, and rejection of extra paths or `--sample` without `--new`.
+
 ## Not established by these checks
 
 - Actual iTerm → SSH → Debian operation, SSH tunnel configuration, or behavior of a specific tmux setup.

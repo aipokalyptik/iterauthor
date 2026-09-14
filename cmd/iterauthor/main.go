@@ -30,7 +30,8 @@ func run() (err error) {
 	check := flag.Bool("check", false, "validate the project and print its summary without a TUI")
 	ver := flag.Bool("version", false, "print version")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: iterauthor [--new] [--sample] [--demo] [--check] PROJECT_DIRECTORY")
+		fmt.Fprintln(os.Stderr, "Usage: iterauthor [--new] [--sample] [--demo] [--check] [PROJECT_DIRECTORY]")
+		fmt.Fprintln(os.Stderr, "PROJECT_DIRECTORY defaults to the current working directory.")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -38,18 +39,22 @@ func run() (err error) {
 		fmt.Println("iterauthor", version)
 		return nil
 	}
-	if flag.NArg() != 1 {
+	if flag.NArg() > 1 {
 		flag.Usage()
-		return fmt.Errorf("provide one project directory")
+		return fmt.Errorf("provide at most one project directory")
 	}
 	if *sample && !*newProject {
 		return fmt.Errorf("--sample requires --new")
 	}
+	dir := "."
+	if flag.NArg() == 1 {
+		dir = flag.Arg(0)
+	}
 	var s *project.Store
 	if *newProject {
-		s, err = project.Create(flag.Arg(0), *title, *sample)
+		s, err = project.Create(dir, *title, *sample)
 	} else {
-		s, err = project.Open(flag.Arg(0))
+		s, err = project.Open(dir)
 	}
 	if err != nil {
 		return err

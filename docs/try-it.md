@@ -39,6 +39,8 @@ Without tmux, disconnecting can terminate the process. Completed calls/candidate
 
 Reopen with `~/iterauthor --demo ~/iterauthor-trial`. Repeated demo passages are expected: the demo tests operation of the tool, not the fiction-writing hypothesis.
 
+The project directory defaults to the current working directory. For example, `cd ~/iterauthor-trial` followed by `~/iterauthor --demo` reopens the trial. Run `~/iterauthor` with no arguments inside a project to use its configured models. Use `~/iterauthor --new` to create a project in an empty current directory.
+
 ## Real models
 
 Create a separate project or reopen the trial without `--demo`:
