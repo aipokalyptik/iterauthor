@@ -577,7 +577,11 @@ func (u *UI) saveEdit() bool {
 	u.editor = nil
 	u.refresh()
 	u.app.SetFocus(u.documentFocus())
-	u.notice("Saved. Finish editing to decide what should be regenerated.")
+	if len(u.state.State.Changes) > 0 {
+		u.notice("Saved. Review affected prose before generating again.")
+	} else {
+		u.notice("Saved. Finish editing when ready.")
+	}
 	return true
 }
 func (u *UI) export() {
@@ -613,7 +617,7 @@ Escape closes a dialog or returns from compact assistant view.
 Ctrl+C requests a clean exit. All main actions also have buttons.
 
 The viewed item and the conversation's edit scope are independent.
-Save keeps the pipeline paused. Finish editing reviews saved changes.
+Save keeps the pipeline paused. Writing changes require review when prose exists.
 While work is running, cancel and wait before editing any sources.
 External editing uses VISUAL, then EDITOR, then vi; Reload on return.
 

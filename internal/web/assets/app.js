@@ -449,7 +449,11 @@ async function saveDocument() {
   ui.original = value;
   ui.dirty = editor.value !== value;
   updateEditor();
-  notice("Saved. Review any affected prose before drafting again.");
+  notice(
+    ui.view.state.changes?.length
+      ? "Saved. Review affected prose before drafting again."
+      : "Saved.",
+  );
 }
 
 function renderContext(content) {
@@ -1323,7 +1327,7 @@ document.addEventListener("click", async (event) => {
           action === "use-candidate"
             ? "Candidate is now the active prose."
             : action === "apply-edits"
-              ? "Proposed edits applied. Review affected prose before drafting."
+              ? "Proposed edits applied."
               : action === "import-outline"
                 ? "Proposal imported as authored outline detail."
                 : "Result invalidated; history retained.",

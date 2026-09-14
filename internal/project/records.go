@@ -91,7 +91,7 @@ func (s *Store) OfferRun(r Run, automatic bool) error {
 	ps := s.State.Passages[r.Target]
 	ps.Candidate = r.ID
 	s.State.Passages[r.Target] = ps
-	if automatic && r.Status == "Available" && s.Status(r.Target) != "Authored" && r.Fingerprint == fingerprint(s.Hashes) {
+	if automatic && r.Status == "Available" && s.Status(r.Target) != "Authored" && r.Fingerprint == generationFingerprint(s.Hashes) {
 		return s.UseCandidate(r, len(r.Candidates)-1, false)
 	}
 	return s.SaveState()
@@ -109,7 +109,7 @@ func (s *Store) UseCandidate(r Run, index int, explicit bool) error {
 	if err := s.CheckUnchanged(); err != nil {
 		return err
 	}
-	if !explicit && r.Fingerprint != fingerprint(s.Hashes) {
+	if !explicit && r.Fingerprint != generationFingerprint(s.Hashes) {
 		return fmt.Errorf("generation inputs changed; candidate retained for review")
 	}
 	c := r.Candidates[index]

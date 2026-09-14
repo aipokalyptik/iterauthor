@@ -95,6 +95,8 @@ func TestBrowserAPIEditingGenerationAndReview(t *testing.T) {
 	if html := request(t, srv, "/", nil, 200); !strings.Contains(string(html), "app.js") {
 		t.Fatal("embedded application missing")
 	}
+	request(t, srv, "/api/command", map[string]any{"action": "generate", "scope": "branch", "target": "arrival"}, 200)
+	waitIdle(t, core)
 	v := core.View()
 	original, err := core.Read("arrival", "outline")
 	if err != nil {
@@ -106,7 +108,7 @@ func TestBrowserAPIEditingGenerationAndReview(t *testing.T) {
 	request(t, srv, "/api/command", map[string]any{"action": "generate", "scope": "branch", "target": "arrival"}, 409)
 	request(t, srv, "/api/command", map[string]any{"action": "decide", "all": true, "choice": "branch"}, 400)
 	request(t, srv, "/api/command", map[string]any{"action": "decide", "all": true, "choice": "keep"}, 200)
-	request(t, srv, "/api/command", map[string]any{"action": "generate", "scope": "branch", "target": "arrival"}, 200)
+	request(t, srv, "/api/command", map[string]any{"action": "generate", "scope": "branch", "target": "arrival", "force": true}, 200)
 	waitIdle(t, core)
 	var runs []struct {
 		ID string `json:"id"`
@@ -114,7 +116,7 @@ func TestBrowserAPIEditingGenerationAndReview(t *testing.T) {
 	if err := json.Unmarshal(request(t, srv, "/api/runs", nil, 200), &runs); err != nil {
 		t.Fatal(err)
 	}
-	if len(runs) != 1 {
+	if len(runs) != 2 {
 		t.Fatal("missing run")
 	}
 	var run project.Run
@@ -132,6 +134,45 @@ func TestBrowserAPIEditingGenerationAndReview(t *testing.T) {
 	request(t, srv, "/api/command", map[string]any{"action": "use-candidate", "id": run.ID, "index": 0}, 400)
 	request(t, srv, "/api/source/unknown/outline", nil, 400)
 	request(t, srv, "/api/version?id=../../project.json", nil, 400)
+}
+
+func TestModelSetupDoesNotBlockFirstDraft(t *testing.T) {
+	core, srv := setup(t, model.Demo{})
+	for _, id := range []string{"base", "writer"} {
+		v := core.View()
+		connection := project.Model{Name: id, Model: id, URL: "http://localhost:1234", Tools: id == "base"}
+		request(t, srv, "/api/command", map[string]any{"action": "save-model", "id": id, "connection": connection, "base": id == "base", "expected": v.ConfigVersion}, 200)
+	}
+	v := core.View()
+	v.Config.Defaults = map[string]string{"prose": "writer", "style": "writer"}
+	request(t, srv, "/api/command", map[string]any{"action": "config", "config": v.Config, "expected": v.ConfigVersion, "title": "Changed feature models", "target": v.Config.Root}, 200)
+	var after application.View
+	if err := json.Unmarshal(request(t, srv, "/api/state", nil, 200), &after); err != nil {
+		t.Fatal(err)
+	}
+	if len(after.State.Changes) != 0 || len(after.State.Decisions) != 3 || after.Busy {
+		t.Fatalf("setup created a review barrier or scheduled work: %+v", after.State)
+	}
+	runs, err := core.Runs()
+	if err != nil || len(runs) != 0 {
+		t.Fatalf("setup should not generate prose: %v", err)
+	}
+	request(t, srv, "/api/command", map[string]any{"action": "generate", "scope": "branch", "target": "arrival"}, 200)
+	waitIdle(t, core)
+	if core.Status("arrival") != "Available" {
+		t.Fatal("first draft did not finish")
+	}
+	v = core.View()
+	connection := v.Config.Models["writer"]
+	connection.URL = "http://another-host:1234/v1"
+	request(t, srv, "/api/command", map[string]any{"action": "save-model", "id": "writer", "connection": connection, "expected": v.ConfigVersion}, 200)
+	if core.View().ConfigVersion == v.ConfigVersion || len(core.View().State.Changes) != 0 {
+		t.Fatal("connection edit should update form version without requiring prose review")
+	}
+	v = core.View()
+	v.Config.Defaults["style"] = "base"
+	request(t, srv, "/api/command", map[string]any{"action": "config", "config": v.Config, "expected": v.ConfigVersion, "title": "Changed feature models", "target": v.Config.Root}, 200)
+	request(t, srv, "/api/command", map[string]any{"action": "generate", "scope": "branch", "target": "arrival", "force": true}, 409)
 }
 
 func TestHTTPRequestOriginProtection(t *testing.T) {

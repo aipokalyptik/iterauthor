@@ -62,8 +62,8 @@ func TestExternalChangesAndInvalidReloadPreserveCurrentProject(t *testing.T) {
 	if err := s.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	if len(s.State.Changes) != 1 {
-		t.Fatalf("expected one change, got %d", len(s.State.Changes))
+	if len(s.State.Changes) != 0 || len(s.State.Decisions) != 1 || s.State.Decisions[0].Decision != "no-prose" {
+		t.Fatal("planning edit should be recorded without a prose review")
 	}
 	c := s.Config.Clone()
 	c.Nodes["visit"].Children = []string{"story"}
@@ -171,7 +171,7 @@ func TestExternalChangesDiscoveredAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer next.Close()
-	if len(next.State.Changes) != 1 {
+	if len(next.State.Changes) != 0 || len(next.State.Decisions) != 1 || next.State.Decisions[0].Decision != "no-prose" {
 		t.Fatal("external edit after exit not detected")
 	}
 }

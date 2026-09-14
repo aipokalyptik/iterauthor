@@ -1,6 +1,7 @@
 package project
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -209,6 +210,56 @@ func (s *Store) addChange(id, description string) {
 	s.State.Changes = append(s.State.Changes, Change{ID: NewID(), Target: id, Description: description, At: Now()})
 }
 
+// Source changes only need an invalidation decision when prose exists. Keep
+// setup and planning changes in history without asking the author to revisit
+// nonexistent output. Reload also reconciles pending changes from older builds.
+func (s *Store) saveSourceChanges() error {
+	if len(s.State.Changes) > 0 {
+		hasProse, err := s.hasProseToReview()
+		if err != nil {
+			return err
+		}
+		if !hasProse {
+			for _, change := range s.State.Changes {
+				change.Decision = "no-prose"
+				s.State.Decisions = append(s.State.Decisions, change)
+			}
+			s.State.Changes = nil
+		}
+	}
+	return s.SaveState()
+}
+
+func (s *Store) hasProseToReview() (bool, error) {
+	for _, id := range s.Config.Leaves(s.Config.Root) {
+		text, err := s.Read(id, "prose")
+		if err != nil {
+			return false, err
+		}
+		if strings.TrimSpace(text) != "" {
+			return true, nil
+		}
+	}
+	// A failed or interrupted draft can retain candidates without active prose.
+	// Outline proposals, context summaries and connection tests are not prose.
+	runs, err := s.Runs()
+	if err != nil {
+		return false, err
+	}
+	for _, run := range runs {
+		n := s.Config.Nodes[run.Target]
+		if run.Kind != "prose" || s.State.InvalidRuns[run.ID] || n == nil || len(n.Children) > 0 {
+			continue
+		}
+		for _, candidate := range run.Candidates {
+			if strings.TrimSpace(candidate.Text) != "" {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 func (s *Store) inputHashes() (map[string]string, error) {
 	h := map[string]string{}
 	add := func(rel string, b []byte) {
@@ -220,6 +271,7 @@ func (s *Store) inputHashes() (map[string]string, error) {
 		return nil, err
 	}
 	add("project.json", b)
+	h[writingConfigKey] = writingConfigHash(s.Config)
 	for id := range s.Config.Nodes {
 		for _, field := range []string{"outline", "style", "prose"} {
 			t, e := s.Read(id, field)
@@ -243,12 +295,18 @@ func fingerprint(h map[string]string) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
-func (s *Store) Fingerprint() (string, error) { h, err := s.inputHashes(); return fingerprint(h), err }
+func (s *Store) Fingerprint() (string, error) {
+	if err := s.CheckUnchanged(); err != nil {
+		return "", err
+	}
+	return generationFingerprint(s.Hashes), nil
+}
 func (s *Store) SyncInputs() error {
 	h, err := s.inputHashes()
 	if err != nil {
 		return err
 	}
+	stampGeneration(h, s.Hashes)
 	if err = WriteJSON(filepath.Join(s.Dir, ".twriter", "inputs.json"), h); err != nil {
 		return err
 	}
@@ -285,6 +343,9 @@ func (s *Store) Reload() error {
 		}
 		sort.Strings(ordered)
 		for _, k := range ordered {
+			if k == writingConfigKey || k == generationKey {
+				continue
+			}
 			if h[k] == s.Hashes[k] {
 				continue
 			}
@@ -293,7 +354,11 @@ func (s *Store) Reload() error {
 			if len(parts) == 3 {
 				id = parts[1]
 			}
-			s.addChange(id, "Reloaded "+k)
+			if k == "project.json" && s.Hashes[writingConfigKey] != "" && s.Hashes[writingConfigKey] == h[writingConfigKey] {
+				s.State.Decisions = append(s.State.Decisions, Change{ID: NewID(), Target: id, Description: "Reloaded " + k, At: Now(), Decision: "future-only"})
+			} else {
+				s.addChange(id, "Reloaded "+k)
+			}
 			if strings.HasSuffix(k, "/prose.md") {
 				ps := s.State.Passages[id]
 				ps.Status = "Authored"
@@ -301,7 +366,7 @@ func (s *Store) Reload() error {
 			}
 		}
 	}
-	if err = s.SaveState(); err != nil {
+	if err = s.saveSourceChanges(); err != nil {
 		return err
 	}
 	return s.SyncInputs()
@@ -311,7 +376,7 @@ func (s *Store) CheckUnchanged() error {
 	if err != nil {
 		return err
 	}
-	if fingerprint(h) != fingerprint(s.Hashes) {
+	if fingerprint(fileHashes(h)) != fingerprint(fileHashes(s.Hashes)) {
 		return fmt.Errorf("files changed outside iterauthor; Reload before saving or generating")
 	}
 	return nil
@@ -351,7 +416,7 @@ func (s *Store) SaveText(id, field, text, expected string) error {
 		ps.Status = "Authored"
 		s.State.Passages[id] = ps
 	}
-	if err = s.SaveState(); err != nil {
+	if err = s.saveSourceChanges(); err != nil {
 		return err
 	}
 	return s.SyncInputs()
@@ -364,15 +429,23 @@ func (s *Store) SaveConfig(c Config, description, target string) error {
 		return err
 	}
 	old, _ := json.MarshalIndent(s.Config, "", "  ")
+	next, _ := json.MarshalIndent(c, "", "  ")
+	if bytes.Equal(old, next) {
+		return nil
+	}
 	if err := s.backup("project", "json", string(old)); err != nil {
 		return err
 	}
 	if err := WriteJSON(filepath.Join(s.Dir, "project.json"), c); err != nil {
 		return err
 	}
+	if writingConfigHash(s.Config) == writingConfigHash(c) {
+		s.State.Decisions = append(s.State.Decisions, Change{ID: NewID(), Target: target, Description: description, At: Now(), Decision: "future-only"})
+	} else {
+		s.addChange(target, description)
+	}
 	s.Config = c
-	s.addChange(target, description)
-	if err := s.SaveState(); err != nil {
+	if err := s.saveSourceChanges(); err != nil {
 		return err
 	}
 	return s.SyncInputs()
@@ -387,7 +460,7 @@ func (s *Store) Snapshot() (Snapshot, error) {
 	if err := s.CheckUnchanged(); err != nil {
 		return Snapshot{}, err
 	}
-	v := Snapshot{Config: s.Config.Clone(), Sources: map[string]Source{}, Styles: map[string]string{}, Prose: map[string]string{}, Fingerprint: fingerprint(s.Hashes)}
+	v := Snapshot{Config: s.Config.Clone(), Sources: map[string]Source{}, Styles: map[string]string{}, Prose: map[string]string{}, Fingerprint: generationFingerprint(s.Hashes)}
 	for id, n := range s.Config.Nodes {
 		t, err := s.Read(id, "outline")
 		if err != nil {
@@ -473,7 +546,7 @@ func (s *Store) AddChild(parent, title, text, handling string) (string, error) {
 	s.Config = c
 	s.addChange(parent, "Added child "+title)
 	s.State.Passages[id] = Passage{Status: "Missing"}
-	if err = s.SaveState(); err != nil {
+	if err = s.saveSourceChanges(); err != nil {
 		return "", err
 	}
 	return id, s.SyncInputs()

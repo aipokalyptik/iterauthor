@@ -272,7 +272,7 @@ func (u *UI) inspectRun(run project.Run) {
 			u.section = "Outline"
 			u.tab = "Outline"
 			u.refresh()
-			u.notice("Imported as authored outline detail. Review saved changes before generation.")
+			u.notice("Imported as authored outline detail.")
 		}), 0, 1, false)
 	}
 	if len(run.Edits) > 0 {

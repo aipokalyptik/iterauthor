@@ -15,7 +15,7 @@ outline/<id>/prose.md                # active text for a leaf
 knowledge/<id>/entry.md              # wiki content
 knowledge/<id>/notes.md              # private author reference
 .twriter/state.json                  # passage state, changes, decisions, last model
-.twriter/inputs.json                 # known source hashes
+.twriter/inputs.json                 # file hashes and generation fingerprint metadata
 .twriter/project.lock                # single-process lock
 .twriter/history/<version>/*         # previous authored text
 .twriter/runs/<run-id>.json           # candidates, reviews, prompts, tool calls
@@ -28,7 +28,7 @@ Markdown is authoritative text; `project.json` is authoritative structure. Stabl
 
 The metadata directory retains its original `.twriter` name for compatibility with the first trial. Existing trial projects open directly in Iterauthor with their conversations, candidates, and history intact; no migration is required.
 
-Writes use a temporary file, sync, and rename. Source saves retain previous content. A process lock excludes another iterauthor instance. Workers receive frozen snapshots; completion checks the fingerprint before automatically activating prose. Fingerprints are project-wide, so an unrelated external source edit can hold a candidate for review.
+Writes use a temporary file, sync, and rename. Source saves retain previous content. A process lock excludes another iterauthor instance. Workers receive frozen snapshots; completion checks the generation fingerprint before automatically activating prose. Raw file hashes detect external edits separately. Generation fingerprints exclude operational settings and remain project-wide, so an unrelated writing-input change can hold a candidate for review. Unchanged projects retain their existing cached-run fingerprints when opened by this build.
 
 Multi-file operations retain recovery history and commit structural metadata last; they are not a transactional filesystem. Backups have an inspection UI; restoration is manual. Keep `.twriter` even when invalidating cached results.
 
@@ -46,7 +46,11 @@ Passing prose may replace prior generated prose. Manual prose requires explicit 
 
 ## Editing and assistant
 
-Projects start paused. Save keeps them paused; Finish editing resolves each saved change before releasing the pause. A setting generates eligible prose after editing is finished, rather than on each keystroke/save.
+Projects start paused. Save keeps them paused; Finish editing requires decisions on pending writing changes before releasing the pause. A setting generates eligible prose after editing is finished, rather than on each keystroke/save.
+
+No prose review is requested until a leaf has active text or a saved, non-invalidated prose candidate. Setup and planning edits are recorded in history with the automatic disposition `no-prose`. Opening or reloading a project also resolves obsolete pending prompts when there is no prose to revisit. Outline proposals, connection tests, and other non-prose results do not create that requirement.
+
+With prose present, edits to outlines, wiki facts, style, context attachments/selection, prompts, and effective model assignments still request a decision. Connection URLs, credential environment names, display labels, protocol capabilities, unused model entries, execution limits, and automatic scheduling are recorded as `future-only`: they apply to future work without blocking drafting or making cached candidates/proposals stale. Explicitly setting an already inherited model or automatic-selection value also leaves prose current. Changing an assigned model's actual model identifier does request review. Identical saves create no decision. Authors can explicitly regenerate to try operational settings; changing a URL to a different backend does not itself request regeneration.
 
 One active operation locks source editing globally. Cancel clears the remaining queue and waits for the active call. Then edit and explicitly generate again. Subtree locks, cancel-on-edit for queued branches, and automatic re-queueing are not implemented.
 

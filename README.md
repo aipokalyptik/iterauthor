@@ -38,7 +38,9 @@ Inference uses compatible Chat Completions APIs. Discovery reads compatible mode
 - **Activity:** inspect candidates, consistency/style findings, prompts, context, and tool calls; apply chosen proposals.
 - **Manuscript:** read active passages in story order and export Markdown.
 
-Text saves with **⌘S / Ctrl+S**; assistant messages send with **⌘Enter / Ctrl+Enter**. Saved source changes offer explicit choices about which prose to revisit. Unsaved text is guarded when navigating. One operation runs at a time; source editing unlocks after completion or cancellation. Closing a browser tab leaves work running in the server.
+Text saves with **⌘S / Ctrl+S**; assistant messages send with **⌘Enter / Ctrl+Enter**. Changes to outlines, style, context, or active model selections offer choices about which existing prose to revisit. Setup and planning need no review when there are no passages or draft candidates. Connection details, unused models, execution limits, and automatic scheduling apply to future work without requiring regeneration. You can explicitly regenerate whenever you want to try new settings.
+
+Unsaved text is guarded when navigating. One operation runs at a time; source editing unlocks after completion or cancellation. Closing a browser tab leaves work running in the server.
 
 ## Build and verify
 

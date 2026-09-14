@@ -62,8 +62,8 @@ config.AutoGenerate = true
 if err := core.SaveConfig(config, "Enable automatic generation", config.Root, view.ConfigVersion); err != nil {
     return err
 }
-// Show the pending changes and collect the author's chosen disposition.
-// Once those decisions have been submitted:
+// Scheduling changes do not require a prose review. Any already pending
+// writing changes must still be resolved before finishing editing.
 return core.FinishEditing()
 ```
 
@@ -75,7 +75,11 @@ err := core.Generate(application.Selection{
 }, false)
 ```
 
-The service enforces the active-work interlock and unresolved-change rule. A UI may disable unavailable buttons or explain an error, but those controls are not the enforcement mechanism. Unsaved text and form buffers remain interface state; each interface must prevent the author from submitting generation while its own source buffer is still open. This build is a single-author workflow, not collaborative editing with distributed edit leases.
+The service enforces the active-work interlock and unresolved-change rule. A UI may disable unavailable buttons or explain an error, but those controls are not the enforcement mechanism. The store classifies settings changes and records planning edits without requiring prose review when no active prose or retained prose candidates exist. Operational settings apply to future work; writing inputs and effective model selections require decisions when prose exists. This policy applies equally to browser, terminal, assistant-applied edits, and external Reload.
+
+Configuration version tokens and raw file hashes continue to cover all configuration fields for stale-save and external-edit detection. Generation fingerprints cover writing inputs and effective model selections, excluding connection plumbing, unused models, execution budgets, and scheduling. `.twriter/inputs.json` checkpoints raw hashes with `@writing-config` and `@generation` metadata; unchanged legacy projects retain their existing generation identity on upgrade. Operational changes therefore do not invalidate saved proposals, while external operational edits still require Reload.
+
+Unsaved text and form buffers remain interface state; each interface must prevent the author from submitting generation while its own source buffer is still open. This build is a single-author workflow, not collaborative editing with distributed edit leases.
 
 ## Work continues independently of rendering
 

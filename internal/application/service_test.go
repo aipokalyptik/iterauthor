@@ -209,6 +209,9 @@ func TestConversationCompletionPreservesDraftAndScopeWithoutUI(t *testing.T) {
 	if strings.Contains(before, "DEMO") {
 		t.Fatal("proposal applied before author acceptance")
 	}
+	v := s.View()
+	v.Config.Limits.Calls++
+	check(t, s.SaveConfig(v.Config, "Increase call budget", v.Config.Root, v.ConfigVersion))
 	check(t, s.ApplyEdits(c.Turns[1].Run))
 	after, err := s.Read("visit", "outline")
 	check(t, err)
@@ -232,6 +235,8 @@ func TestConversationCompletionPreservesDraftAndScopeWithoutUI(t *testing.T) {
 
 func TestSnapshotsAndStaleEditorsCannotMutateCoreState(t *testing.T) {
 	s := fixture(t, model.Demo{})
+	check(t, s.Generate(application.Selection{Scope: "branch", Target: "visit"}, false))
+	idle(t, s)
 	old := s.View()
 	changed := s.View()
 	changed.Config.Nodes["visit"].Title = "A different title"
@@ -309,10 +314,9 @@ func TestEditingModeAutoGenerationAndModelCapabilities(t *testing.T) {
 	if _, err := s.NewConversation("visit", "edit", "writer"); err == nil {
 		t.Fatal("tool-free interactive editor accepted")
 	}
-	if err := s.FinishEditing(); !errors.Is(err, application.ErrChanges) {
-		t.Fatalf("pending changes ignored: %v", err)
+	if len(s.View().State.Changes) != 0 {
+		t.Fatal("initial model setup needs no prose review")
 	}
-	check(t, s.DecideAll("keep"))
 	check(t, s.FinishEditing())
 	idle(t, s)
 	if s.View().Editing || s.Status("visit") != "Available" {

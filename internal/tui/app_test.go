@@ -270,7 +270,7 @@ func TestMouseEditingAndModifierCommands(t *testing.T) {
 	tt.wait("Ctrl+S Save")
 	tt.typeText("Inserted text. ")
 	tt.key(tcell.KeyCtrlS)
-	tt.wait("1 changes")
+	tt.wait("Saved.")
 	tt.onUI(func() {
 		text, err := tt.u.core.Read("visit", "outline")
 		if err != nil {
@@ -281,6 +281,9 @@ func TestMouseEditingAndModifierCommands(t *testing.T) {
 		}
 		if !tt.u.state.Editing {
 			t.Error("save resumed generation")
+		}
+		if len(tt.u.state.State.Changes) != 0 || len(tt.u.state.State.Decisions) != 1 {
+			t.Error("planning edit should be recorded without a prose review")
 		}
 	})
 	tt.key(tcell.KeyCtrlG)
@@ -375,7 +378,7 @@ func TestConversationScopeAndStagedEdits(t *testing.T) {
 		if !strings.Contains(text, "DEMO proposed outline") || strings.Contains(other, "DEMO") {
 			t.Error("proposal applied to the wrong source")
 		}
-		if !tt.u.state.Editing || len(tt.u.state.State.Changes) != 1 {
+		if !tt.u.state.Editing || len(tt.u.state.State.Changes) != 0 || len(tt.u.state.State.Decisions) != 1 {
 			t.Error("applying a proposal did not pause generation and record the change")
 		}
 	})
