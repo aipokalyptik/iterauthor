@@ -29,7 +29,7 @@ with tempfile.TemporaryDirectory(prefix="iterauthor-pty-") as directory:
         if slave > 2:
             os.close(slave)
         environment = dict(os.environ, TERM="xterm-256color", LANG="en_US.UTF-8")
-        os.execve(binary, [binary, "--new", "--sample", "--demo", str(story)], environment)
+        os.execve(binary, [binary, "--tui", "--new", "--sample", "--demo", str(story)], environment)
     os.close(slave)
     os.set_blocking(master, False)
     output = bytearray()

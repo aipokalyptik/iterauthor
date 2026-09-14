@@ -2,7 +2,7 @@
 
 This build concentrates on a usable end-to-end loop: author sources → select context/models → generate → review → inspect → revise sources → regenerate. It is not the complete scheduler in the longer-term UI design.
 
-The [application service](architecture.md) owns workflow state, worker execution and persistence. The TUI submits commands and renders detached state. A future interface can use the same core; no web server is included yet.
+The [application service](architecture.md) owns workflow state, worker execution and persistence. The default HTTP/browser interface and optional TUI submit commands and render detached state through the same core. Browser assets are embedded in the Go binary.
 
 ## Files
 
@@ -24,7 +24,7 @@ exports/manuscript.md                # draft with visible gaps/status markers
 exports/manifest.json                # source hashes and passage status
 ```
 
-Markdown is authoritative text; `project.json` is authoritative structure. Stable IDs survive renames; child-array order determines manuscript order. Optional text files may be absent. The TUI adds children/wiki entries; structural move/reorder/delete currently require paused external metadata editing and Reload.
+Markdown is authoritative text; `project.json` is authoritative structure. Stable IDs survive renames; child-array order determines manuscript order. Optional text files may be absent. Both interfaces add children/wiki entries; structural move/reorder/delete currently require paused external metadata editing and Reload.
 
 The metadata directory retains its original `.twriter` name for compatibility with the first trial. Existing trial projects open directly in Iterauthor with their conversations, candidates, and history intact; no migration is required.
 
@@ -62,7 +62,7 @@ Private notes are excluded from worker snapshots. Models have no arbitrary files
 - Leaf-to-parent conversion retains prose as an outline reference, a private note, or discards its active contribution. Outline reference keeps the text for refinement; no LLM summary is implied. Parent prose stops contributing to the manuscript.
 - Style supports inherited additions or replacement of the whole inherited style, without named-rule replacement. Operation prompts append down the tree.
 - Queues do not resume after restart. Completed calls/candidates are checkpointed; a call killed before returning cannot be recovered.
-- No streaming, native Anthropic/Responses adapters, automatic provider discovery, web research, multi-process editing, or publication formatting. Compatible endpoints can differ in model behavior and options.
-- Simulated terminal checks cover 80×24 and 120×40. Smaller screens, accessibility, and actual iTerm-over-SSH behavior need trials.
+- No streaming, native Anthropic/Responses inference adapters, web research, multi-process editing, or publication formatting. URL-driven discovery supports compatible model lists and optional LM Studio/Ollama metadata; server loading/reasoning settings are informational rather than editable. Compatible endpoints can differ in model behavior and options.
+- Browser and terminal interaction checks cover the main workflow. Accessibility, long authoring sessions, and actual iTerm/SSH forwarding to Debian still need trials.
 
 The experiment should measure whether an author can diagnose a poor passage, change a relevant source, and obtain a better draft without managing excessive configuration. That result should guide the next scheduler and interface work.

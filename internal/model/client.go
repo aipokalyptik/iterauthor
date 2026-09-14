@@ -58,7 +58,7 @@ func NewHTTP() *HTTP {
 func (h *HTTP) Complete(ctx context.Context, m project.Model, messages []Message, tools []Tool, maxTokens int) (Response, error) {
 	var result Response
 	if strings.TrimSpace(m.Model) == "" {
-		return result, fmt.Errorf("configure the model identifier in Settings → Models")
+		return result, fmt.Errorf("connect a writing model in Models")
 	}
 	u, err := url.Parse(strings.TrimRight(m.URL, "/"))
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {

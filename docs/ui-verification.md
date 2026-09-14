@@ -1,6 +1,6 @@
 # UI interaction study: verification and limits
 
-This records the earlier browser study. See [test-verification.md](test-verification.md) for the runnable terminal build.
+This records the earlier browser study. See [test-verification.md](test-verification.md) for the current runnable browser and optional terminal build.
 
 September 14, 2026. These checks exercised deterministic sample data in the in-app browser. They validate specific interface transitions, not real model quality, filesystem safety, terminal compatibility, or author usability.
 

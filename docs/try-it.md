@@ -1,86 +1,69 @@
 # Trying Iterauthor
 
-## Copy to Debian
+## Debian over SSH
 
-Build with `make release` or use the prepared binaries in `dist/`. Choose `iterauthor-linux-amd64` for `uname -m` = `x86_64`, or `iterauthor-linux-arm64` for `aarch64`.
+Build with `make release`. Choose `iterauthor-linux-amd64` for `uname -m` = `x86_64`, or `iterauthor-linux-arm64` for `aarch64`.
 
 ```sh
 # On your Mac; substitute your SSH destination.
 scp dist/iterauthor-linux-amd64 you@debian:~/iterauthor
-ssh you@debian
+ssh -L 8080:127.0.0.1:8080 you@debian
 
-# On Debian, inside your SSH session.
+# On Debian, in that SSH session.
 chmod +x ~/iterauthor
 ~/iterauthor --new --sample --demo ~/iterauthor-trial
 ```
 
-The binary is compiled with CGO disabled. Debian needs a working UTF-8 terminal and, for HTTPS endpoints, its usual CA certificate store. An 80×24 terminal works; 120×40 is more comfortable. iTerm normally reports `TERM=xterm-256color`. If the app reports that the terminal is not cursor addressable, check `TERM`; `dumb` is unsuitable.
+Open **http://127.0.0.1:8080** in your Mac's browser. iTerm carries the SSH session and tunnel; the browser handles editing, mouse navigation, and menus. No browser or frontend runtime is needed on Debian. HTTPS model endpoints require Debian's usual CA certificate store.
 
-Mouse reporting must be enabled in iTerm and passed through SSH/tmux. Use the terminal's selection override for native text selection. iterauthor needs no function keys or extended keyboard protocol.
+Iterauthor deliberately listens only on localhost. SSH forwarding provides remote access to this single-author server. There is no public listener or login system in this test build. If local port 8080 is occupied, use `ssh -L 8081:127.0.0.1:8080 you@debian` and open port 8081 on the Mac. Change the server port separately with `--listen 127.0.0.1:8082` when needed; your tunnel's destination port must match it.
 
-To survive disconnects, run inside an existing `tmux` installation:
+To keep the server running after an SSH disconnect, use an existing `tmux` session or your normal process supervisor. Closing a browser tab does not cancel generation. Stopping the server with Ctrl+C requests cancellation and waits briefly for checkpointing. Completed work is retained; queues do not automatically resume after restart.
 
-```sh
-tmux new -s iterauthor
-~/iterauthor --demo ~/iterauthor-trial
-```
-
-Without tmux, disconnecting can terminate the process. Completed calls/candidates have checkpoints; interrupted jobs appear in Activity after reopening. Queues do not automatically resume.
+Reopen with `~/iterauthor --demo ~/iterauthor-trial`. From inside the project directory, `~/iterauthor --demo` is sufficient. Plain `~/iterauthor` opens the current project using its configured real models. `~/iterauthor --new` creates a project in an empty current directory.
 
 ## First walkthrough
 
-1. Click **The kitchen scene**, then **Guidance** and **Context**. Inspect inherited style and references. **Notes** is explicitly private.
-2. Open **Outline → Edit**, add a requirement, and save with **Ctrl+S**. Generation stays paused.
-3. Click **Finish editing**. Review the change and choose Keep, branch, selected passages, or the entire story. There are bulk choices for multiple changes. Finish editing again once the choices are resolved.
-4. Open **Prose → Generate** and choose a scope. Activity shows progress. Open the completed operation for candidates, reviews, and **Exact inputs/tools**.
-5. Select a scene and **Discuss**. Choose advice or proposed edits. Enter adds a newline; **Ctrl+R** sends. Browsing does not change the conversation's scope. Inspect an edit's **CURRENT / PROPOSED** text in Activity before **Apply proposals**.
-6. Use **Generate outline detail** through **Ctrl+G**, inspect the proposal, and import useful detail. Use **Add child outline** for structural children at any depth.
-7. Open **Manuscript → Export manuscript**. The project receives `exports/manuscript.md` and its source/status manifest. Missing and invalidated passages are marked.
+1. Select **The kitchen scene**. Edit its **Outline** and save using the button or **⌘S / Ctrl+S**.
+2. Select **Review changes**. Keep existing prose, revisit the branch, choose passages, or revisit the whole story. Each change receives its own decision; bulk choices are available.
+3. Open **Style** to edit local guidance and inspect effective inherited style. **Context & instructions** controls automatic selection, required references, and stage instructions. **Private notes** is excluded from model access.
+4. Select **Draft passage**, confirm the scope, and inspect the completed result in **Activity**. Review candidates, both reviewers' findings, and exact context/tool traces. Manual prose requires explicit candidate selection before replacement.
+5. Select **Discuss this outline** and choose discussion or proposed edits. Type a message and use **Send** or **⌘Enter / Ctrl+Enter**. Browsing another entry leaves the conversation's original scope intact. Inspect **Current / Proposed** text before **Apply proposed edits**.
+6. Select **Develop outline** to request detail within the brief; import useful output as authored text. **+ Add** creates structural children. Adding children to a passage with prose asks what should happen to its existing text.
+7. Read **Manuscript** and **Export Markdown**. The browser downloads a copy; `exports/manuscript.md` and a source/status manifest are also written in the project. Missing or outdated passages remain visibly marked.
 
-Reopen with `~/iterauthor --demo ~/iterauthor-trial`. Repeated demo passages are expected: the demo tests operation of the tool, not the fiction-writing hypothesis.
+Demo results repeat intentionally. They demonstrate the workflow, not model quality.
 
-The project directory defaults to the current working directory. For example, `cd ~/iterauthor-trial` followed by `~/iterauthor --demo` reopens the trial. Run `~/iterauthor` with no arguments inside a project to use its configured models. Use `~/iterauthor --new` to create a project in an empty current directory.
+## Real model setup
 
-## Real models
-
-Create a separate project or reopen the trial without `--demo`:
+Reopen without `--demo`, or create a separate project:
 
 ```sh
 ~/iterauthor --new --title 'My novel' ~/my-novel
 ```
 
-In **Settings → Models**, edit **Base model**. Supply a label, API base URL, and the exact model identifier your server offers. Typical URLs:
+Open **Models → Connect a model**, enter the API URL, and select **Discover models**. A server address, compatible API base, or model-list URL is accepted. Select a returned model, inspect available metadata, and run **Test selected model**. Save after the test completes.
 
-| Service | API base URL |
-| --- | --- |
-| LM Studio, same machine | `http://127.0.0.1:1234/v1` |
-| LM Studio, LAN | `http://YOUR-MODEL-HOST:1234/v1` |
-| Ollama compatibility API | `http://YOUR-MODEL-HOST:11434/v1` |
-| [llama.cpp server](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md) compatibility API | `http://YOUR-MODEL-HOST:8080/v1` |
-| OpenAI | `https://api.openai.com/v1` |
+The adapter discovers compatible `/v1/models` lists. It also checks LM Studio's native model listings and Ollama's `/api/tags` when available. Reported fields can include context size, loaded state, quantization, tool training, and reasoning choices. Missing fields remain unknown. Reasoning choices are informational in this build; model loading and generation settings retain their server defaults.
 
-Addresses are resolved **from Debian**. Its `127.0.0.1` is not your Mac. Configure your server's listening address or an SSH tunnel accordingly.
+The test makes at most four small inference calls: text, optional output-token parameter retry, a harmless tool call, and its continuation. This can load a local model and incurs ordinary inference charges for a paid endpoint. The app automatically selects `max_tokens` or `max_completion_tokens`; you do not configure that field manually. A successful text test with failed tool use permits writing-task assignments, but cannot become the base model.
 
-Credentials are environment variables. Enter the **variable name**, not the secret, in the connection form. For example, if the Debian process has `OPENAI_API_KEY` in its environment, enter `OPENAI_API_KEY`. iterauthor does not read `.env` files or support ChatGPT account login. Authentication is optional for servers that do not require a key.
+Addresses are resolved **from Debian**, so its `127.0.0.1` refers to Debian. For a model server on your Mac or LAN, use an address reachable from Debian or another SSH tunnel. Common server addresses are `http://YOUR-MODEL-HOST:1234` for LM Studio, `http://YOUR-MODEL-HOST:11434` for Ollama, or the actual listen address of your llama.cpp server. Hosted providers require their compatible API base URL.
 
-Choose `max_tokens` or `max_completion_tokens` according to the endpoint/model. No model-specific temperature or reasoning controls are sent. Requests are non-streaming; Activity shows the stage while waiting for a complete reply.
+Expand **Authentication** only when required. Enter the name of an environment variable already set for the Iterauthor process, rather than the secret. The application does not read `.env` files or use ChatGPT account login. There is no silent fallback to demo output.
 
-Save the connection, then use **Test base tools**. The Supports tools checkbox is only a declaration; the test requires an actual `read_entry` call and round trip. A provider error is shown directly. There is no fallback to demo replies after a failed request.
+Start with one tool-capable base model. Add further connections and use **Change assignments** for task defaults. **Style → Change inheritance or model choices** overrides assignments for an outline and descendants. Selection, consistency, and interactive conversations require tool use; outlining, prose, and style accept text-only models.
 
-Add connections for other hosts/models. **Feature defaults** selects models for outlining, writing, selection, consistency, and style. **Guidance → Models/style mode** overrides them for a subtree. Consistency and automatic selection require tools; writer, outline expansion, and style review accept text-only models.
+Discovery references: [LM Studio model metadata](https://lmstudio.ai/docs/developer/rest/list), [Ollama model lists](https://docs.ollama.com/api/tags), and [llama.cpp server](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md). Compatibility is verified with local HTTP fixtures, not every live provider/model combination.
 
-Protocol references: [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat), [LM Studio tools](https://lmstudio.ai/docs/developer/openai-compat/tools), and [Ollama compatibility](https://docs.ollama.com/api/openai-compatibility). Tests exercise requests against a local HTTP fixture. Individual server/model combinations still need their connection test.
+## External editing and recovery
 
-## External editing
+While work is idle, edit Markdown or metadata from another shell, then select **Reload project files**. If work is active, use **Stop generation** and wait for it to finish before editing externally. Avoid simultaneous writes to the same source. Detected stale saves are rejected, but arbitrary external editors do not participate in an atomic transaction. Invalid metadata keeps the last valid in-memory configuration and reports an error.
 
-Begin editing, or cancel active work and wait. **Open in external editor** suspends the TUI and runs `VISUAL`, `EDITOR`, or `vi`, then reloads after a successful exit. Alternatively edit from another shell and use **Project → Reload**.
-
-Avoid simultaneous external/TUI writes to the same source. The app rejects detected external changes before saving/generating, but file checks cannot make arbitrary writers participate in a transaction. Invalid metadata leaves the last valid in-memory configuration intact and reports the error. Notes do not invalidate generation.
-
-Back up the entire project, including `.twriter`, to retain conversations/candidates/history. Check structure without launching the interface using:
+Back up the whole project, including `.twriter`, to retain history, candidates, and conversations. Stop the server before inspecting the same project with another process:
 
 ```sh
 ~/iterauthor --check ~/my-novel
 ```
 
-This check still acquires the single-process project lock; close the project's TUI first.
+The optional legacy TUI runs with `--tui`. It retains mouse support and modifier-key commands, including Ctrl+G for commands, Ctrl+S for save, and Ctrl+R for assistant send. Its external-editor command uses `VISUAL`, `EDITOR`, or `vi`. The browser interface does not launch a remote editor process.

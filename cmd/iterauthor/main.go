@@ -6,15 +6,18 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/aipokalyptik/iterauthor/internal/application"
 	"github.com/aipokalyptik/iterauthor/internal/model"
 	"github.com/aipokalyptik/iterauthor/internal/project"
 	"github.com/aipokalyptik/iterauthor/internal/tui"
+	"github.com/aipokalyptik/iterauthor/internal/web"
 )
 
-var version = "0.1.0-test"
+var version = "0.2.0-test"
 
 func main() {
 	if err := run(); err != nil {
@@ -27,7 +30,9 @@ func run() (err error) {
 	sample := flag.Bool("sample", false, "create with the sample story (requires --new)")
 	demo := flag.Bool("demo", false, "use explicit synthetic model replies; no network calls")
 	title := flag.String("title", "My story", "title for a new project")
-	check := flag.Bool("check", false, "validate the project and print its summary without a TUI")
+	check := flag.Bool("check", false, "validate the project and print its summary without starting an interface")
+	terminal := flag.Bool("tui", false, "use the optional terminal interface")
+	listen := flag.String("listen", "127.0.0.1:8080", "HTTP listen address (localhost only; use SSH forwarding for remote access)")
 	ver := flag.Bool("version", false, "print version")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: iterauthor [--new] [--sample] [--demo] [--check] [PROJECT_DIRECTORY]")
@@ -74,5 +79,16 @@ func run() (err error) {
 		defer cancel()
 		err = errors.Join(err, core.Shutdown(ctx))
 	}()
-	return tui.New(core).Run()
+	if *terminal {
+		return tui.New(core).Run()
+	}
+	listener, err := web.Listen(*listen)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	fmt.Printf("Iterauthor — %s\nOpen http://%s in your browser.\nPress Ctrl+C to stop.\n", s.Config.Title, listener.Addr())
+	return web.Serve(ctx, listener, web.New(core))
 }

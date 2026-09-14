@@ -19,6 +19,7 @@ func TestPackageBoundaries(t *testing.T) {
 		"engine":      {"project": true, "model": true},
 		"application": {"project": true, "model": true, "engine": true},
 		"tui":         {"application": true, "project": true},
+		"web":         {"application": true, "project": true},
 	}
 	for pkg, deps := range allowed {
 		files, err := filepath.Glob(filepath.Join("..", pkg, "*.go"))
@@ -44,7 +45,7 @@ func TestPackageBoundaries(t *testing.T) {
 					projectAlias = imp.Name.Name
 				}
 			}
-			if pkg == "tui" {
+			if pkg == "tui" || pkg == "web" {
 				ast.Inspect(tree, func(n ast.Node) bool {
 					sel, ok := n.(*ast.SelectorExpr)
 					if !ok {

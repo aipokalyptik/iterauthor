@@ -1,5 +1,6 @@
 # Iterauthor: first interface specification
 
+Historical TUI design. The 0.2 test build pivots to an HTTP/browser interface; see [try-it.md](try-it.md) for the current workflow.
 Status: longer-term interface design, September 14, 2026. A runnable Go test build now exists. See [test-version.md](test-version.md) for its actual implementation and explicit limits; this design includes behavior beyond that build. The earlier browser study uses sample data only.
 
 ## 1. What the interface must make obvious

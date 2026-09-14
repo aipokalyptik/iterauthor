@@ -1,12 +1,13 @@
 # Application and interface boundaries
 
-Iterauthor is one Go application with a reusable application service. The TUI is its first interface. A future web interface can call the same service without taking ownership of generation, queue execution, source writes, or review rules.
+Iterauthor is one Go application with a reusable application service. The embedded HTTP/browser interface is the default; the TUI remains an optional adapter. Both call the same service without owning generation, queue execution, source writes, or review rules.
 
 ```mermaid
 flowchart TD
-    CLI[Executable: configuration and lifecycle] --> TUI[Terminal interface]
+    CLI[Executable: configuration and lifecycle] --> WEB[HTTP server and browser assets]
+    CLI --> TUI[Optional terminal interface]
     CLI --> APP[Application service]
-    WEB[Future HTTP interface] -. commands and views .-> APP
+    WEB --> APP
     TUI --> APP
     APP --> ENGINE[Generation and review engine]
     APP --> STORE[Project values and filesystem store]
@@ -19,14 +20,15 @@ flowchart TD
 
 | Package | Owns |
 | --- | --- |
-| `cmd/iterauthor` | Flags, initial project opening, model client construction, service construction, terminal startup, orderly shutdown. |
+| `cmd/iterauthor` | Flags, initial project opening, model client construction, service construction, interface startup, loopback listener, signal handling, orderly shutdown. |
 | `internal/application` | One open project, serialized commands, editing/busy/canceling state, queue eligibility and budgets, worker lifetime, result activation, conversation completion, proposal application, invalidation decisions, detached views and subscriptions. |
 | `internal/engine` | One bounded generation/review operation, context selection, scoped tools, immutable source inputs, candidate creation and run checkpoints. It never activates prose or edits source files itself. |
 | `internal/project` | Project value types, inheritance and validation, Markdown/JSON storage, process locking, source history, input fingerprints, run/conversation records, manuscript assembly and exports. |
-| `internal/model` | The `Client` interface, compatible HTTP transport, request cancellation, response parsing and the explicit demo client. |
+| `internal/model` | The `Client` interface, compatible HTTP transport, request cancellation, response parsing, URL/model discovery, connection capability testing, and the explicit demo client. |
+| `internal/web` | Embedded browser assets, HTTP commands/queries, request-origin checks, SSE subscription lifecycle, browser forms, and unsaved buffers. |
 | `internal/tui` | Layout, focus, mouse/keyboard interactions, forms, unsaved buffers, rendering, dialogs, launching the external editor, and translating author actions into service commands. |
 
-The TUI has no store pointer, model client, engine, worker goroutine, cancellation context, or queue budget. It can use project value types and inheritance calculations to explain settings. An architecture test rejects reverse dependencies, terminal dependencies in the core, and direct store access from the TUI.
+Neither interface has a store pointer, model client, engine, worker goroutine, cancellation context, or queue budget. It can use project value types and inheritance calculations to explain settings. An architecture test rejects reverse dependencies, terminal dependencies in the core, and direct store access from either interface.
 
 `application.New(store, client, demo)` transfers exclusive ownership of the store to the service. After construction, callers must use the service rather than retain another path to mutable store fields. The concrete filesystem store remains sufficient for this experiment; there is no database abstraction or dependency injection framework.
 
@@ -41,6 +43,7 @@ The service is an in-process Go API, not an HTTP API. Its inputs and returned va
 | Edit sources and settings | `BeginEditing`, `SaveText`, `SaveConfig`, `AddChild`, `AddEntry`, `FinishEditing` |
 | Reconcile external editing | `PrepareExternalEdit`, `Reload` |
 | Generate passages | `Generate(Selection, force)` with branch, selected passages, or story scope |
+| Discover and configure model connections | `DiscoverModels`, `ProbeModel`, `SaveModel` |
 | Generate outline detail or test tools | `Start(Job)` |
 | Work with the assistant | `NewConversation`, `SetConversationModel`, `Send`, `SaveDraft` |
 | Apply or invalidate generated work | `UseCandidate`, `ImportOutline`, `ApplyEdits`, `Invalidate`, `InvalidateRun` |
@@ -50,7 +53,7 @@ The service is an in-process Go API, not an HTTP API. Its inputs and returned va
 
 `View` returns copies of config, passage state and queue information. Editing those copies cannot change the running project. Configuration forms submit the `ConfigVersion` received when opened; stale forms are rejected. Source saves supply the original text. Run application uses persisted run IDs and candidate indices, so an interface cannot accidentally substitute its own cached run body. Source edit proposals are checked in full for scope, permitted fields and freshness before any writes begin.
 
-For example, a future interface can use the following sequence against an existing service:
+For example, either interface can use the following sequence against an existing service:
 
 ```go
 view := core.View()
@@ -84,11 +87,15 @@ Stopping `UI.Run` detaches that observer. The executable owns service lifetime a
 
 Cancellation clears pending queue entries and signals the active operation. `Busy` remains true until the worker finishes checkpointing and saving its result. `Shutdown(ctx)` waits for that completion before closing the filesystem store and releasing the project lock. If the wait times out, the service remains closed to new commands and retains the lock; the host may retry shutdown. Calling `Cancel` or unsubscribing does not close the project.
 
-## Adding a web interface
+## HTTP adapter
 
-Add HTTP handlers and browser assets as another adapter, with an executable that constructs the same service and model client. Handlers translate requests into the commands above and return values/errors; an SSE or WebSocket connection can translate subscription wakeups into refreshed views. Browser disconnection should unsubscribe that observer, not cancel project work. Use one service per open project in that server rather than switching a shared service between unrelated browser sessions.
+`internal/web` serves embedded HTML/CSS/JavaScript and an explicit JSON API. Read routes expose sources, history, runs, conversations, settings, and manuscript text. `/api/command` maps named author actions to service methods. Model discovery and connection tests have separate endpoints. The browser never receives a store pointer or an API-key value.
 
-Routing, authentication, session ownership, unsaved browser buffers, reconnect behavior and presentation still need design. They belong at the interface/host boundary. A web adapter must expose deliberate author operations; it should not blindly export local filesystem paths or the local external-editor command. No web server is included in this build.
+`/api/events` translates coalesced service notifications into SSE wakeups. Browser code refreshes detached views and preserves unsaved buffers. Disconnecting unsubscribes that listener; the application's worker continues independently. Reconnecting obtains the latest state. Connection tests temporarily use the core busy/cancellation interlock; unlike submitted story jobs, they are canceled if their requesting HTTP connection ends.
+
+The executable permits loopback addresses only. Request middleware rejects non-loopback Host names, foreign origins, cross-site fetches, and POST requests without the custom JSON request header. No CORS access is granted. This is a single-author local server accessed remotely through SSH forwarding, with no authentication or multi-user session design. Other trusted local processes can access it. Exposing it as a shared service would require a separate authentication/authorization design.
+
+HTTP handlers do not expose arbitrary file paths, shell commands, or the TUI's external-editor launcher. Config writes use version tokens, text writes carry the expected original, and proposals use persisted run identities. Browser controls explain the interlocks while the application service enforces them. Unsaved buffers are per browser tab; use one authoring tab at a time.
 
 The current single-process project lock, global editing pause, non-resumable queues, and individually atomic file writes remain deliberate prototype limits. Multiple independent processes cannot write the same project. Fingerprint checks detect external changes but are not an atomic compare-and-swap against arbitrary external editors, and multi-file edits are not crash-atomic transactions. Changing those capabilities later is core/storage work shared by all interfaces.
 

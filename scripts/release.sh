@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 cd "$(dirname "$0")/.."
-version=${ITERAUTHOR_VERSION:-0.1.0-test}
+version=${ITERAUTHOR_VERSION:-0.2.0-test}
 mkdir -p dist
 for target in linux-amd64 linux-arm64 darwin-arm64; do
     platform=${target%-*}

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Iterauthor</title>
+    <link rel="icon" href="/mark.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <aside id="sidebar">
+      <a class="brand" href="/" aria-label="Iterauthor home"
+        ><img src="/mark.svg" alt="" width="32" height="32" /><span
+          >Iterauthor<small>A place to shape your story</small></span
+        ></a
+      >
+      <div class="project-label">YOUR PROJECT</div>
+      <h1 id="project-title">Opening project…</h1>
+      <nav id="navigation" aria-label="Project sections"></nav>
+      <div id="tree-heading"></div>
+      <div id="tree" role="navigation" aria-label="Project items"></div>
+      <div class="sidebar-bottom">
+        <button data-action="reload" class="quiet">
+          ↻ Reload project files</button
+        ><button data-nav="settings" class="quiet">Project settings</button
+        ><span id="connection-state" class="connection">Connecting…</span>
+      </div>
+    </aside>
+    <div id="workspace">
+      <header id="topbar">
+        <div id="breadcrumb">Your workspace</div>
+        <div class="top-actions">
+          <span id="mode" class="badge"></span
+          ><button id="assistant-toggle" data-action="assistant">
+            Writing assistant
+          </button>
+        </div>
+      </header>
+      <div id="work-status" hidden></div>
+      <div id="change-banner" hidden></div>
+      <div id="columns">
+        <main id="main" tabindex="-1">
+          <div class="empty">Opening your project…</div>
+        </main>
+        <aside id="assistant" hidden aria-label="Writing assistant"></aside>
+      </div>
+    </div>
+    <dialog id="dialog">
+      <header>
+        <h2 id="dialog-title"></h2>
+        <button id="dialog-close" aria-label="Close dialog">×</button>
+      </header>
+      <div id="dialog-body"></div>
+    </dialog>
+    <div id="notice" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>
