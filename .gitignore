@@ -1,0 +1,5 @@
+/dist/
+/work/
+*.test
+.DS_Store
+.env.local
