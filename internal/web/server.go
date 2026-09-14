@@ -91,10 +91,6 @@ func New(core *application.Service) http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
-		if !localHost(r.Host) {
-			http.Error(w, "Use the localhost address printed by Iterauthor.", http.StatusForbidden)
-			return
-		}
 		if origin := r.Header.Get("Origin"); origin != "" {
 			u, err := url.Parse(origin)
 			if err != nil || u.Host != r.Host || u.Scheme != "http" {
@@ -114,27 +110,12 @@ func New(core *application.Service) http.Handler {
 	})
 }
 
-func localHost(host string) bool {
-	name, _, err := net.SplitHostPort(host)
-	if err != nil {
-		name = host
-	}
-	if name == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(strings.Trim(name, "[]"))
-	return ip != nil && ip.IsLoopback()
-}
-
-// Listen deliberately keeps this single-author prototype on loopback. SSH
-// forwarding provides remote browser access without exposing project commands.
+// Listen honors the author's bind address, including specific interfaces and
+// wildcard addresses. The executable defaults to localhost.
 func Listen(address string) (net.Listener, error) {
-	host, _, err := net.SplitHostPort(address)
+	_, _, err := net.SplitHostPort(address)
 	if err != nil {
 		return nil, fmt.Errorf("listen address must be host:port: %w", err)
-	}
-	if !localHost(host) {
-		return nil, fmt.Errorf("use a loopback listen address such as 127.0.0.1:8080; connect remotely with SSH forwarding")
 	}
 	return net.Listen("tcp", address)
 }

@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -132,9 +134,9 @@ func TestBrowserAPIEditingGenerationAndReview(t *testing.T) {
 	request(t, srv, "/api/version?id=../../project.json", nil, 400)
 }
 
-func TestHTTPOriginAndHostProtection(t *testing.T) {
+func TestHTTPRequestOriginProtection(t *testing.T) {
 	_, srv := setup(t, model.Demo{})
-	for _, kind := range []string{"host", "origin", "fetch-site", "missing-header", "bad-json", "extra-json", "unknown-field"} {
+	for _, kind := range []string{"origin", "fetch-site", "missing-header", "bad-json", "extra-json", "unknown-field"} {
 		t.Run(kind, func(t *testing.T) {
 			body := `{"action":"cancel"}`
 			status := 403
@@ -153,8 +155,6 @@ func TestHTTPOriginAndHostProtection(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Iterauthor", "1")
 			switch kind {
-			case "host":
-				req.Host = "attacker.test"
 			case "origin":
 				req.Header.Set("Origin", "https://attacker.test")
 			case "fetch-site":
@@ -175,17 +175,60 @@ func TestHTTPOriginAndHostProtection(t *testing.T) {
 			}
 		})
 	}
-	for _, address := range []string{"0.0.0.0:0", ":0", "192.168.1.10:0", "[::]:0"} {
-		if listener, err := web.Listen(address); err == nil {
-			listener.Close()
-			t.Errorf("public listener allowed: %s", address)
-		}
+}
+
+func TestNetworkBindingAndRemoteHostRequests(t *testing.T) {
+	core, _ := setup(t, model.Demo{})
+	for _, address := range []string{"127.0.0.1:0", "0.0.0.0:0", ":0", "[::]:0"} {
+		t.Run(address, func(t *testing.T) {
+			listener, err := web.Listen(address)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- web.Serve(ctx, listener, web.New(core)) }()
+			t.Cleanup(func() {
+				cancel()
+				select {
+				case err := <-done:
+					if err != nil {
+						t.Error(err)
+					}
+				case <-time.After(time.Second):
+					t.Error("HTTP server did not stop")
+				}
+			})
+			addr := listener.Addr().(*net.TCPAddr)
+			target := net.JoinHostPort("127.0.0.1", fmt.Sprint(addr.Port))
+			if address == "[::]:0" {
+				target = net.JoinHostPort("::1", fmt.Sprint(addr.Port))
+			}
+			client := &http.Client{Timeout: 2 * time.Second}
+			for _, host := range []string{"debian.lan:8080", "192.168.1.10:8080", "[fd00::10]:8080"} {
+				for _, path := range []string{"/", "/app.js", "/api/state", "/api/command"} {
+					method, body := http.MethodGet, ""
+					if path == "/api/command" {
+						method, body = http.MethodPost, `{"action":"begin-editing"}`
+					}
+					req, _ := http.NewRequest(method, "http://"+target+path, strings.NewReader(body))
+					req.Host = host
+					req.Header.Set("Origin", "http://"+host)
+					req.Header.Set("Content-Type", "application/json")
+					req.Header.Set("X-Iterauthor", "1")
+					res, err := client.Do(req)
+					if err != nil {
+						t.Fatal(err)
+					}
+					res.Body.Close()
+					if res.StatusCode != http.StatusOK {
+						t.Fatalf("%s %s: HTTP %d", host, path, res.StatusCode)
+					}
+				}
+			}
+		})
 	}
-	listener, err := web.Listen("127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	listener.Close()
 }
 
 type held struct {

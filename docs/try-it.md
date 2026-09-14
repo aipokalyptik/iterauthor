@@ -1,26 +1,28 @@
 # Trying Iterauthor
 
-## Debian over SSH
+## Debian and direct browser access
 
 Build with `make release`. Choose `iterauthor-linux-amd64` for `uname -m` = `x86_64`, or `iterauthor-linux-arm64` for `aarch64`.
 
 ```sh
 # On your Mac; substitute your SSH destination.
 scp dist/iterauthor-linux-amd64 you@debian:~/iterauthor
-ssh -L 8080:127.0.0.1:8080 you@debian
+ssh you@debian
 
 # On Debian, in that SSH session.
 chmod +x ~/iterauthor
-~/iterauthor --new --sample --demo ~/iterauthor-trial
+~/iterauthor --new --sample --demo --listen 0.0.0.0:8080 ~/iterauthor-trial
 ```
 
-Open **http://127.0.0.1:8080** in your Mac's browser. iTerm carries the SSH session and tunnel; the browser handles editing, mouse navigation, and menus. No browser or frontend runtime is needed on Debian. HTTPS model endpoints require Debian's usual CA certificate store.
+Open **http://YOUR-DEBIAN-HOST:8080** in your Mac's browser, using the server's hostname or IP. iTerm runs the SSH session; the browser handles editing, mouse navigation, and menus. No browser or frontend runtime is needed on Debian. HTTPS model endpoints require Debian's usual CA certificate store.
 
-Iterauthor deliberately listens only on localhost. SSH forwarding provides remote access to this single-author server. There is no public listener or login system in this test build. If local port 8080 is occupied, use `ssh -L 8081:127.0.0.1:8080 you@debian` and open port 8081 on the Mac. Change the server port separately with `--listen 127.0.0.1:8082` when needed; your tunnel's destination port must match it.
+`--listen` accepts ordinary bind addresses: `0.0.0.0:8080`, `:8080`, `[::]:8080`, or a particular interface such as `192.168.1.10:8080`. Without the flag, the default remains `127.0.0.1:8080`. The server accepts browser requests addressed to its hostname or IP. This single-author test build has no authentication; anyone who can reach the listener can access the open project.
+
+SSH forwarding is optional. To use it, keep the default localhost listener and connect with `ssh -L 8080:127.0.0.1:8080 you@debian`, then open **http://127.0.0.1:8080** on your Mac. If local port 8080 is occupied, use `-L 8081:127.0.0.1:8080` and open port 8081. The tunnel's destination port must match the server's listen port.
 
 To keep the server running after an SSH disconnect, use an existing `tmux` session or your normal process supervisor. Closing a browser tab does not cancel generation. Stopping the server with Ctrl+C requests cancellation and waits briefly for checkpointing. Completed work is retained; queues do not automatically resume after restart.
 
-Reopen with `~/iterauthor --demo ~/iterauthor-trial`. From inside the project directory, `~/iterauthor --demo` is sufficient. Plain `~/iterauthor` opens the current project using its configured real models. `~/iterauthor --new` creates a project in an empty current directory.
+Reopen for direct network access with `~/iterauthor --demo --listen 0.0.0.0:8080 ~/iterauthor-trial`. From inside the project directory, omit the path: `~/iterauthor --demo --listen 0.0.0.0:8080`. Plain `~/iterauthor` opens the current project using its configured real models. `~/iterauthor --new` creates a project in an empty current directory.
 
 ## First walkthrough
 

@@ -4,7 +4,7 @@ A browser workspace for author-directed, model-assisted long-form fiction. This 
 
 Iterauthor combines *iterate* and *author*: develop a brief, generate a passage, inspect the result, and refine the sources that guide the next draft.
 
-One Go binary serves the interface and runs the writing engine. Debian needs no Node runtime, frontend build, Python environment, or database. Use your Mac's browser through an SSH tunnel.
+One Go binary serves the interface and runs the writing engine. Debian needs no Node runtime, frontend build, Python environment, or database. Connect from your browser directly or through an SSH tunnel.
 
 ```sh
 ./iterauthor --new --sample --demo ~/iterauthor-trial
@@ -13,6 +13,8 @@ One Go binary serves the interface and runs the writing engine. Debian needs no 
 Open **http://127.0.0.1:8080**. `--demo` uses explicitly marked synthetic replies and makes no model-server calls. It tests the workflow, not writing quality. Omit `--new` when reopening.
 
 The project directory defaults to the **current working directory**. Run `iterauthor` inside an existing project, or `iterauthor --new` in an empty directory. Use `--listen 127.0.0.1:8081` if port 8080 is occupied. The previous terminal interface remains available with `--tui`.
+
+To connect directly from another machine, run `iterauthor --listen 0.0.0.0:8080` and open `http://YOUR-SERVER:8080`. You can also bind to a specific interface address or use `--listen :8080` for all interfaces. Localhost remains the default.
 
 ## Connect a model
 
@@ -51,7 +53,7 @@ make release
 
 `make release` produces Linux amd64, Linux arm64, and macOS arm64 binaries, documentation archives, and SHA-256 checksums in `dist/`. Browser assets are embedded in every binary.
 
-- [Debian, SSH forwarding, and first walkthrough](docs/try-it.md)
+- [Debian, network access, and first walkthrough](docs/try-it.md)
 - [Implementation and current limits](docs/test-version.md)
 - [Application and interface architecture](docs/architecture.md)
 - [Verification evidence](docs/test-verification.md)

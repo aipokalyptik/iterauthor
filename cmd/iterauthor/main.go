@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -32,7 +33,7 @@ func run() (err error) {
 	title := flag.String("title", "My story", "title for a new project")
 	check := flag.Bool("check", false, "validate the project and print its summary without starting an interface")
 	terminal := flag.Bool("tui", false, "use the optional terminal interface")
-	listen := flag.String("listen", "127.0.0.1:8080", "HTTP listen address (localhost only; use SSH forwarding for remote access)")
+	listen := flag.String("listen", "127.0.0.1:8080", "HTTP bind address; use 0.0.0.0:8080 or :8080 for network access")
 	ver := flag.Bool("version", false, "print version")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: iterauthor [--new] [--sample] [--demo] [--check] [PROJECT_DIRECTORY]")
@@ -89,6 +90,12 @@ func run() (err error) {
 	defer listener.Close()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	fmt.Printf("Iterauthor — %s\nOpen http://%s in your browser.\nPress Ctrl+C to stop.\n", s.Config.Title, listener.Addr())
+	fmt.Printf("Iterauthor — %s\nListening on %s\n", core.View().Config.Title, listener.Addr())
+	if addr, ok := listener.Addr().(*net.TCPAddr); ok && addr.IP.IsUnspecified() {
+		fmt.Printf("Open http://localhost:%d on this machine, or use this server's hostname or IP and port %d from another machine.\n", addr.Port, addr.Port)
+	} else {
+		fmt.Printf("Open http://%s in your browser.\n", listener.Addr())
+	}
+	fmt.Println("Press Ctrl+C to stop.")
 	return web.Serve(ctx, listener, web.New(core))
 }

@@ -20,7 +20,7 @@ flowchart TD
 
 | Package | Owns |
 | --- | --- |
-| `cmd/iterauthor` | Flags, initial project opening, model client construction, service construction, interface startup, loopback listener, signal handling, orderly shutdown. |
+| `cmd/iterauthor` | Flags, initial project opening, model client construction, service construction, interface startup, configured listener, signal handling, orderly shutdown. |
 | `internal/application` | One open project, serialized commands, editing/busy/canceling state, queue eligibility and budgets, worker lifetime, result activation, conversation completion, proposal application, invalidation decisions, detached views and subscriptions. |
 | `internal/engine` | One bounded generation/review operation, context selection, scoped tools, immutable source inputs, candidate creation and run checkpoints. It never activates prose or edits source files itself. |
 | `internal/project` | Project value types, inheritance and validation, Markdown/JSON storage, process locking, source history, input fingerprints, run/conversation records, manuscript assembly and exports. |
@@ -93,7 +93,8 @@ Cancellation clears pending queue entries and signals the active operation. `Bus
 
 `/api/events` translates coalesced service notifications into SSE wakeups. Browser code refreshes detached views and preserves unsaved buffers. Disconnecting unsubscribes that listener; the application's worker continues independently. Reconnecting obtains the latest state. Connection tests temporarily use the core busy/cancellation interlock; unlike submitted story jobs, they are canceled if their requesting HTTP connection ends.
 
-The executable permits loopback addresses only. Request middleware rejects non-loopback Host names, foreign origins, cross-site fetches, and POST requests without the custom JSON request header. No CORS access is granted. This is a single-author local server accessed remotely through SSH forwarding, with no authentication or multi-user session design. Other trusted local processes can access it. Exposing it as a shared service would require a separate authentication/authorization design.
+The executable defaults to localhost and honors explicit network bind addresses, including wildcard IPv4/IPv6 listeners. Request middleware accepts the hostname or IP used to reach that listener, while rejecting foreign origins, cross-site fetches, and POST requests without the custom JSON request header. No CORS access is granted. Direct browser access and SSH forwarding both work. This remains a single-author server without authentication or multi-user authorization: every client that can reach it has access to the open project.
+
 
 HTTP handlers do not expose arbitrary file paths, shell commands, or the TUI's external-editor launcher. Config writes use version tokens, text writes carry the expected original, and proposals use persisted run identities. Browser controls explain the interlocks while the application service enforces them. Unsaved buffers are per browser tab; use one authoring tab at a time.
 
