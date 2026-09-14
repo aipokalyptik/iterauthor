@@ -1,10 +1,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
+	"github.com/aipokalyptik/iterauthor/internal/application"
+	"github.com/aipokalyptik/iterauthor/internal/model"
 	"github.com/aipokalyptik/iterauthor/internal/project"
 	"github.com/aipokalyptik/iterauthor/internal/tui"
 )
@@ -17,7 +22,7 @@ func main() {
 		os.Exit(1)
 	}
 }
-func run() error {
+func run() (err error) {
 	newProject := flag.Bool("new", false, "create a project in an empty directory")
 	sample := flag.Bool("sample", false, "create with the sample story (requires --new)")
 	demo := flag.Bool("demo", false, "use explicit synthetic model replies; no network calls")
@@ -41,7 +46,6 @@ func run() error {
 		return fmt.Errorf("--sample requires --new")
 	}
 	var s *project.Store
-	var err error
 	if *newProject {
 		s, err = project.Create(flag.Arg(0), *title, *sample)
 	} else {
@@ -55,7 +59,15 @@ func run() error {
 		fmt.Printf("%s\nProject: %s\nOutline items: %d\nKnowledge entries: %d\nPassages: %d\nUnresolved changes: %d\n", s.Config.Title, s.Dir, len(s.Config.Nodes), len(s.Config.Knowledge), len(s.Config.Leaves(s.Config.Root)), len(s.State.Changes))
 		return nil
 	}
-	u := tui.New(s, *demo)
-	defer u.Close()
-	return u.Run()
+	var client model.Client = model.NewHTTP()
+	if *demo {
+		client = model.Demo{}
+	}
+	core := application.New(s, client, *demo)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err = errors.Join(err, core.Shutdown(ctx))
+	}()
+	return tui.New(core).Run()
 }

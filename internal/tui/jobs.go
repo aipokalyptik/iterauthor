@@ -1,35 +1,21 @@
 package tui
 
 import (
-	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
-	"github.com/aipokalyptik/iterauthor/internal/engine"
+	"github.com/aipokalyptik/iterauthor/internal/application"
 	"github.com/aipokalyptik/iterauthor/internal/project"
 	"github.com/rivo/tview"
 )
 
-func (u *UI) eligible(ids []string, force bool) []string {
-	var out []string
-	for _, id := range ids {
-		status := u.store.Status(id)
-		if force || status == "Missing" || status == "Invalidated" {
-			out = append(out, id)
-		}
-	}
-	return out
-}
 func (u *UI) generationDialog(force bool) {
-	if u.busy || u.editor != nil {
+	if u.state.Busy || u.editor != nil {
 		u.notice("Save the open buffer or stop active work before generation.")
 		return
 	}
-	if len(u.store.State.Changes) > 0 {
+	if len(u.state.State.Changes) > 0 {
 		u.changes()
 		return
 	}
@@ -38,126 +24,46 @@ func (u *UI) generationDialog(force bool) {
 	if force {
 		title = "Regenerate"
 	}
-	u.choice(title+" prose", u.store.Config.TitleOf(id)+fmt.Sprintf("\n%d calls maximum across this queue; %d draft attempts per passage.\nAuthored prose remains active until you choose a replacement.", u.store.Config.Limits.Calls, u.store.Config.Limits.Drafts), []string{"This branch", "Selected passages", "Entire story", "Back"}, func(i int) {
+	u.choice(title+" prose", u.state.Config.TitleOf(id)+fmt.Sprintf("\n%d calls maximum across this queue; %d draft attempts per passage.\nAuthored prose remains active until you choose a replacement.", u.state.Config.Limits.Calls, u.state.Config.Limits.Drafts), []string{"This branch", "Selected passages", "Entire story", "Back"}, func(i int) {
 		if i == 3 {
 			return
 		}
-		start := func(ids []string) { u.editing = false; u.beginQueue(u.eligible(ids, force)) }
+		start := func(ids []string) { u.generate(application.Selection{Scope: "selected", IDs: ids}, force) }
 		if i == 1 {
 			u.selectPassages(title+" selected passages", start)
 			return
 		}
-		ids := u.store.Config.Leaves(id)
+		sel := application.Selection{Scope: "branch", Target: id}
 		if i == 2 {
-			ids = u.store.Config.Leaves(u.store.Config.Root)
+			sel.Scope = "story"
 		}
-		start(ids)
+		u.generate(sel, force)
 	})
 }
-func (u *UI) beginQueue(ids []string) {
-	if len(ids) == 0 {
-		u.notice("No eligible passages. Regenerate requests replacement candidates.")
+func (u *UI) generate(selection application.Selection, force bool) {
+	if u.editor != nil {
+		u.notice("Save the open buffer before generation.")
 		return
 	}
-	u.queue = append([]string(nil), ids...)
-	u.queueCalls = u.store.Config.Limits.Calls
-	u.queueDeadline = time.Now().Add(time.Duration(u.store.Config.Limits.Minutes) * time.Minute)
-	u.queueContext, u.queueCancel = context.WithDeadline(context.Background(), u.queueDeadline)
-	u.nextQueued()
-}
-func (u *UI) nextQueued() {
-	if len(u.queue) == 0 {
-		if u.queueCancel != nil {
-			u.queueCancel()
-			u.queueCancel = nil
-		}
-		return
-	}
-	if u.queueCalls <= 0 || time.Now().After(u.queueDeadline) {
-		u.queue = nil
-		if u.queueCancel != nil {
-			u.queueCancel()
-		}
-		u.notice("Queue budget exhausted. Completed candidates are retained in Activity.")
-		return
-	}
-	id := u.queue[0]
-	u.queue = u.queue[1:]
-	u.startJob("prose", id, "", "", nil)
-}
-func (u *UI) startJob(kind, target, manualModel, prompt string, history []project.Turn) {
-	if u.busy || u.editor != nil {
-		u.notice("Finish the active operation or save the editor first.")
-		return
-	}
-	snapshot, err := u.store.Snapshot()
-	if err != nil {
-		u.queue = nil
+	if err := u.core.Generate(selection, force); err != nil {
 		u.error(err)
 		return
 	}
-	ctx := context.Background()
-	if kind == "prose" && u.queueContext != nil {
-		ctx = u.queueContext
-		snapshot.Config.Limits.Calls = u.queueCalls
-	}
-	ctx, u.cancel = context.WithCancel(ctx)
-	u.busy = true
-	store := u.store
-	if kind == "prose" {
-		u.editing = false
+	if u.core.View().Busy {
 		u.section = "Activity"
-	} else {
-		u.editing = true
 	}
-	u.notice("Starting " + kind + " for " + store.Config.TitleOf(target))
 	u.refresh()
-	e := engine.Engine{Client: u.client, Demo: u.demo, Save: store.SaveRun, Progress: func(stage string) { u.post(func() { u.notice(stage) }) }}
-	go func() {
-		run := e.Run(ctx, snapshot, target, kind, manualModel, prompt, history)
-		u.post(func() {
-			u.busy = false
-			u.cancel = nil
-			if kind == "prose" {
-				u.queueCalls -= run.Calls
-				if err := store.OfferRun(run, run.Status == "Available"); err != nil {
-					u.notice(err.Error())
-					u.queue = nil
-				}
-			}
-			if kind == "advice" || kind == "edit" {
-				if u.conversation != nil && u.conversation.Target == target {
-					reply := run.Text
-					if run.Error != "" {
-						reply += "\n" + run.Error
-					}
-					if len(run.Edits) > 0 {
-						reply += fmt.Sprintf("\n%d edit proposal(s) retained. Open this run in Activity to apply them.", len(run.Edits))
-					}
-					u.conversation.Turns = append(u.conversation.Turns, project.Turn{Role: "assistant", Text: reply, Run: run.ID})
-					if err := store.SaveConversation(*u.conversation); err != nil {
-						u.notice(err.Error())
-					}
-				}
-			}
-			if run.Status == "Canceled" || run.Status == "Failed" {
-				u.queue = nil
-			}
-			u.refresh()
-			u.notice(run.Kind + ": " + run.Status + " · " + run.Error)
-			if u.quitPending {
-				u.app.Stop()
-				return
-			}
-			if kind == "prose" && len(u.queue) > 0 {
-				u.nextQueued()
-				return
-			}
-			if kind == "outline" || kind == "test" {
-				u.inspectRun(run)
-			}
-		})
-	}()
+}
+func (u *UI) startJob(kind, target, manualModel, prompt string) {
+	if u.editor != nil {
+		u.notice("Save the open buffer first.")
+		return
+	}
+	if err := u.core.Start(application.Job{Kind: kind, Target: target, Model: manualModel, Prompt: prompt}); err != nil {
+		u.error(err)
+		return
+	}
+	u.refresh()
 }
 func (u *UI) expand() {
 	if !u.writable() {
@@ -166,8 +72,8 @@ func (u *UI) expand() {
 	id := u.selected
 	direction := tview.NewTextArea().SetLabel("Direction: ").SetText("Add useful detail inside this drafting brief. Preserve my existing plot decisions.", false).SetSize(8, 0)
 	f := tview.NewForm().AddFormItem(direction)
-	f.AddButton("Generate proposal", func() { p := direction.GetText(); u.closeDialog(); u.startJob("outline", id, "", p, nil) }).AddButton("Back", u.closeDialog)
-	f.SetBorder(true).SetTitle(" Generate outline detail · " + u.store.Config.TitleOf(id) + " ")
+	f.AddButton("Generate proposal", func() { p := direction.GetText(); u.closeDialog(); u.startJob("outline", id, "", p) }).AddButton("Back", u.closeDialog)
+	f.SetBorder(true).SetTitle(" Generate outline detail · " + u.state.Config.TitleOf(id) + " ")
 	u.showDialog(f, 90, 18, f)
 }
 
@@ -176,24 +82,24 @@ func (u *UI) newConversation() {
 		return
 	}
 	target := u.currentID()
-	if u.store.Config.Nodes[target] == nil && u.store.Config.Knowledge[target] == nil {
-		target = u.store.Config.Root
+	if u.state.Config.Nodes[target] == nil && u.state.Config.Knowledge[target] == nil {
+		target = u.state.Config.Root
 	}
-	ids := u.store.Config.ModelIDs()
-	selected := u.store.State.LastManualModel
-	if _, ok := u.store.Config.Models[selected]; !ok {
-		selected = u.store.Config.BaseModel
+	ids := u.state.Config.ModelIDs()
+	selected := u.state.State.LastManualModel
+	if _, ok := u.state.Config.Models[selected]; !ok {
+		selected = u.state.Config.BaseModel
 	}
 	index := 0
 	var labels []string
 	for i, id := range ids {
-		labels = append(labels, u.store.Config.Models[id].Name)
+		labels = append(labels, u.state.Config.Models[id].Name)
 		if id == selected {
 			index = i
 		}
 	}
 	mode := "advice"
-	f := tview.NewForm().AddTextView("Scope", u.store.Config.TitleOf(target)+" ["+target+"]\nWrite scope: selected item and outline descendants. Private notes excluded.\nBrowsing does not retarget the conversation.", 60, 4, false, false).AddDropDown("Activity", []string{"Advice / research", "Propose source edits"}, 0, func(_ string, i int) {
+	f := tview.NewForm().AddTextView("Scope", u.state.Config.TitleOf(target)+" ["+target+"]\nWrite scope: selected item and outline descendants. Private notes excluded.\nBrowsing does not retarget the conversation.", 60, 4, false, false).AddDropDown("Activity", []string{"Advice / research", "Propose source edits"}, 0, func(_ string, i int) {
 		mode = "advice"
 		if i == 1 {
 			mode = "edit"
@@ -201,21 +107,17 @@ func (u *UI) newConversation() {
 	}).AddDropDown("Model", labels, index, func(_ string, i int) { selected = ids[i] })
 	f.AddButton("Start conversation", func() {
 		if u.conversation != nil {
-			if err := u.store.SaveConversation(*u.conversation); err != nil {
+			if err := u.core.SaveDraft(u.conversation.ID, u.prompt.GetText()); err != nil {
 				u.notice(err.Error())
 				return
 			}
 		}
-		u.conversation = &project.Conversation{ID: project.NewID(), Target: target, Mode: mode, Model: selected}
-		u.store.State.LastManualModel = selected
-		if err := u.store.SaveState(); err != nil {
-			u.notice(err.Error())
+		conversation, err := u.core.NewConversation(target, mode, selected)
+		if err != nil {
+			u.error(err)
 			return
 		}
-		if err := u.store.SaveConversation(*u.conversation); err != nil {
-			u.notice(err.Error())
-			return
-		}
+		u.conversation = &conversation
 		u.prompt.SetText("", false)
 		u.assistantVisible = true
 		u.compactAssistant = true
@@ -228,11 +130,11 @@ func (u *UI) newConversation() {
 	u.showDialog(f, 92, 22, f)
 }
 func (u *UI) sessionMenu() {
-	if u.busy {
+	if u.state.Busy {
 		u.notice("Finish or cancel the active conversation turn before switching sessions.")
 		return
 	}
-	list, err := u.store.Conversations()
+	list, err := u.core.Conversations()
 	if err != nil {
 		u.error(err)
 		return
@@ -240,9 +142,9 @@ func (u *UI) sessionMenu() {
 	menu := tview.NewList().ShowSecondaryText(true)
 	for _, c := range list {
 		conversation := c
-		menu.AddItem(u.store.Config.TitleOf(c.Target)+" · "+c.Mode, c.ID+" · "+u.store.Config.Models[c.Model].Name, 0, func() {
+		menu.AddItem(u.state.Config.TitleOf(c.Target)+" · "+c.Mode, c.ID+" · "+u.state.Config.Models[c.Model].Name, 0, func() {
 			if u.conversation != nil {
-				if err := u.store.SaveConversation(*u.conversation); err != nil {
+				if err := u.core.SaveDraft(u.conversation.ID, u.prompt.GetText()); err != nil {
 					u.error(err)
 					return
 				}
@@ -263,7 +165,7 @@ func (u *UI) sessionMenu() {
 	u.showDialog(menu, 92, 26, menu)
 }
 func (u *UI) manualModelDialog() {
-	if u.busy {
+	if u.state.Busy {
 		u.notice("Finish or cancel the current turn first.")
 		return
 	}
@@ -272,20 +174,15 @@ func (u *UI) manualModelDialog() {
 		return
 	}
 	menu := tview.NewList()
-	for _, id := range u.store.Config.ModelIDs() {
+	for _, id := range u.state.Config.ModelIDs() {
 		ref := id
-		m := u.store.Config.Models[id]
+		m := u.state.Config.Models[id]
 		menu.AddItem(m.Name, m.Model, 0, func() {
+			if err := u.core.SetConversationModel(u.conversation.ID, ref); err != nil {
+				u.error(err)
+				return
+			}
 			u.conversation.Model = ref
-			u.store.State.LastManualModel = ref
-			if err := u.store.SaveConversation(*u.conversation); err != nil {
-				u.error(err)
-				return
-			}
-			if err := u.store.SaveState(); err != nil {
-				u.error(err)
-				return
-			}
 			u.closeDialog()
 			u.renderAssistant()
 		})
@@ -299,7 +196,7 @@ func (u *UI) send() {
 		u.newConversation()
 		return
 	}
-	if u.busy || u.editor != nil {
+	if u.state.Busy || u.editor != nil {
 		u.notice("Save the editor or stop the active operation first.")
 		return
 	}
@@ -307,24 +204,26 @@ func (u *UI) send() {
 	if p == "" {
 		return
 	}
-	c := u.conversation
-	history := append([]project.Turn(nil), c.Turns...)
-	c.Turns = append(c.Turns, project.Turn{Role: "author", Text: p})
-	c.Draft = ""
-	u.prompt.SetText("", false)
-	if err := u.store.SaveConversation(*c); err != nil {
+	if err := u.core.Send(u.conversation.ID, p); err != nil {
 		u.error(err)
 		return
 	}
-	u.startJob(c.Mode, c.Target, c.Model, p, history)
+	c, err := u.core.LoadConversation(u.conversation.ID)
+	if err != nil {
+		u.error(err)
+		return
+	}
+	u.conversation = &c
+	u.prompt.SetText("", false)
+	u.refresh()
 }
 func (u *UI) reviewLatest(id string) {
-	ref := u.store.State.Passages[id].Candidate
+	ref := u.state.State.Passages[id].Candidate
 	if ref == "" {
 		u.message("No candidate", "Generate or regenerate a passage first.")
 		return
 	}
-	r, err := u.store.LoadRun(ref)
+	r, err := u.core.LoadRun(ref)
 	if err != nil {
 		u.error(err)
 		return
@@ -332,11 +231,11 @@ func (u *UI) reviewLatest(id string) {
 	u.inspectRun(r)
 }
 func (u *UI) inspectRun(run project.Run) {
-	text := fmt.Sprintf("%s · %s\nTarget: %s\nCalls: %d; reported tokens: %d\n%s\n\n", run.Kind, run.Status, u.store.Config.TitleOf(run.Target), run.Calls, run.Tokens, run.Error)
+	text := fmt.Sprintf("%s · %s\nTarget: %s\nCalls: %d; reported tokens: %d\n%s\n\n", run.Kind, run.Status, u.state.Config.TitleOf(run.Target), run.Calls, run.Tokens, run.Error)
 	if run.Demo {
 		text += "DEMO MODEL — outputs and reviews are synthetic.\n\n"
 	}
-	if u.store.State.InvalidRuns[run.ID] {
+	if u.state.State.InvalidRuns[run.ID] {
 		text += "INVALIDATED — retained for inspection only.\n\n"
 	}
 	text += run.Text
@@ -344,15 +243,15 @@ func (u *UI) inspectRun(run project.Run) {
 		text += fmt.Sprintf("\n\nCANDIDATE %d\n\n%s\n\nConsistency:\n%s\n\nStyle:\n%s", i+1, c.Text, pretty(c.Consistency), pretty(c.Style))
 	}
 	for _, edit := range run.Edits {
-		old, _ := u.store.Read(edit.ID, edit.Field)
-		text += "\n\nEDIT PROPOSAL: " + u.store.Config.TitleOf(edit.ID) + " / " + edit.Field + "\n\nCURRENT:\n" + old + "\n\nPROPOSED:\n" + edit.Text
+		old, _ := u.core.Read(edit.ID, edit.Field)
+		text += "\n\nEDIT PROPOSAL: " + u.state.Config.TitleOf(edit.ID) + " / " + edit.Field + "\n\nCURRENT:\n" + old + "\n\nPROPOSED:\n" + edit.Text
 	}
 	view := tview.NewTextView().SetText(clean(text)).SetWrap(true).SetWordWrap(true)
 	view.SetBorder(true).SetTitle(" Operation " + run.ID + " ")
 	bar := tview.NewFlex().AddItem(u.button("Back", u.closeDialog), 0, 1, false).AddItem(u.button("Exact inputs/tools", func() { u.inspectText("Recorded calls and context", run.Context+"\n\n"+pretty(run.Trace)) }), 0, 1, false)
 	if run.Kind == "prose" && len(run.Candidates) > 0 {
 		bar.AddItem(u.button("Use candidate", func() {
-			if u.busy {
+			if u.state.Busy {
 				u.notice("Stop active work before applying a candidate.")
 				return
 			}
@@ -364,16 +263,7 @@ func (u *UI) inspectRun(run project.Run) {
 			if !u.writable() {
 				return
 			}
-			if u.store.State.InvalidRuns[run.ID] {
-				u.notice("This proposal is invalidated.")
-				return
-			}
-			current, err := u.store.Read(run.Target, "outline")
-			if err != nil {
-				u.error(err)
-				return
-			}
-			if err = u.store.SaveText(run.Target, "outline", current+"\n\n"+run.Text, current); err != nil {
+			if err := u.core.ImportOutline(run.ID); err != nil {
 				u.error(err)
 				return
 			}
@@ -400,11 +290,10 @@ func (u *UI) chooseCandidate(run project.Run) {
 			status = "Both checks passed"
 		}
 		list.AddItem(fmt.Sprintf("Candidate %d", i+1), status, 0, func() {
-			if err := u.store.UseCandidate(run, index, true); err != nil {
+			if err := u.core.UseCandidate(run.ID, index); err != nil {
 				u.error(err)
 				return
 			}
-			u.editing = true
 			u.closeDialog()
 			u.selected = run.Target
 			u.section = "Outline"
@@ -421,83 +310,37 @@ func (u *UI) applyEdits(run project.Run) {
 	if !u.writable() {
 		return
 	}
-	if u.store.State.InvalidRuns[run.ID] {
-		u.notice("This run is invalidated.")
-		return
-	}
-	hash, err := u.store.Fingerprint()
-	if err != nil {
+	if err := u.core.ApplyEdits(run.ID); err != nil {
 		u.error(err)
 		return
-	}
-	if hash != run.Fingerprint {
-		u.error(fmt.Errorf("sources changed since this proposal; start a new turn using current files"))
-		return
-	}
-	for _, edit := range run.Edits {
-		if !u.store.Config.Contains(run.Target, edit.ID) {
-			u.error(fmt.Errorf("proposal is outside its write scope"))
-			return
-		}
-		old, err := u.store.Read(edit.ID, edit.Field)
-		if err != nil {
-			u.error(err)
-			return
-		}
-		if err = u.store.SaveText(edit.ID, edit.Field, edit.Text, old); err != nil {
-			u.error(err)
-			return
-		}
 	}
 	u.closeDialog()
 	u.refresh()
 	u.notice("Scoped edits applied and views refreshed. Generation remains paused.")
 }
 func (u *UI) sourceHistory(id string) {
-	base := filepath.Join(u.store.Dir, ".twriter", "history")
-	dirs, err := os.ReadDir(base)
-	if os.IsNotExist(err) {
-		u.message("Source history", "No source edits have been saved yet.")
-		return
-	}
+	versions, err := u.core.SourceHistory(id)
 	if err != nil {
 		u.error(err)
 		return
 	}
-	type version struct {
-		path, label string
-		at          time.Time
+	if len(versions) == 0 {
+		u.message("Source history", "No source edits have been saved yet.")
+		return
 	}
-	var versions []version
-	for _, dir := range dirs {
-		if !dir.IsDir() {
-			continue
-		}
-		files, _ := os.ReadDir(filepath.Join(base, dir.Name()))
-		for _, f := range files {
-			if strings.HasPrefix(f.Name(), id+"-") {
-				info, e := f.Info()
-				if e != nil {
-					continue
-				}
-				versions = append(versions, version{path: filepath.Join(base, dir.Name(), f.Name()), label: f.Name(), at: info.ModTime()})
-			}
-		}
-	}
-	sort.Slice(versions, func(i, j int) bool { return versions[i].at.After(versions[j].at) })
 	list := tview.NewList().ShowSecondaryText(true)
 	for _, v := range versions {
 		v := v
-		list.AddItem(v.label, v.at.Format(time.RFC3339), 0, func() {
-			b, e := os.ReadFile(v.path)
+		list.AddItem(v.Label, v.At.Format(time.RFC3339), 0, func() {
+			text, e := u.core.ReadSourceVersion(v.ID)
 			if e != nil {
 				u.error(e)
 				return
 			}
-			u.inspectText("Source backup · "+v.label, string(b))
+			u.inspectText("Source backup · "+v.Label, text)
 		})
 	}
 	list.AddItem("Back", "", 0, u.closeDialog)
-	list.SetBorder(true).SetTitle(" Source history · " + u.store.Config.TitleOf(id) + " ")
+	list.SetBorder(true).SetTitle(" Source history · " + u.state.Config.TitleOf(id) + " ")
 	u.showDialog(list, 90, 28, list)
 }

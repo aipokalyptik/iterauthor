@@ -5,9 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/aipokalyptik/iterauthor/internal/application"
 	"github.com/aipokalyptik/iterauthor/internal/model"
 	"github.com/aipokalyptik/iterauthor/internal/project"
 	"github.com/gdamore/tcell/v2"
@@ -29,11 +31,10 @@ func (c cancelClient) Complete(ctx context.Context, _ project.Model, _ []model.M
 }
 
 func TestCancelStopsQueueBeforeEditing(t *testing.T) {
-	tt := startTerminal(t, 120, 40)
 	started := make(chan struct{})
+	tt := startTerminal(t, 120, 40, cancelClient{started: started})
 	tt.onUI(func() {
-		tt.u.client = cancelClient{started: started}
-		tt.u.beginQueue([]string{"arrival", "visit"})
+		tt.u.generate(application.Selection{Scope: "selected", IDs: []string{"arrival", "visit"}}, false)
 	})
 	select {
 	case <-started:
@@ -49,7 +50,7 @@ func TestCancelStopsQueueBeforeEditing(t *testing.T) {
 	})
 	tt.wait("prose: Canceled")
 	tt.onUI(func() {
-		if tt.u.busy || len(tt.u.queue) != 0 {
+		if tt.u.state.Busy || len(tt.u.state.Queue) != 0 {
 			t.Error("cancel left work active or queued")
 		}
 		tt.u.navigate("Outline", "visit")
@@ -60,20 +61,26 @@ func TestCancelStopsQueueBeforeEditing(t *testing.T) {
 	})
 }
 
-func startTerminal(t *testing.T, w, h int) *terminal {
+func startTerminal(t *testing.T, w, h int, clients ...model.Client) *terminal {
 	t.Helper()
 	s, err := project.Create(filepath.Join(t.TempDir(), "story"), "Test", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	u := New(s, true)
+	var client model.Client = model.Demo{}
+	if len(clients) > 0 {
+		client = clients[0]
+	}
+	u := New(application.New(s, client, true))
 	screen := tcell.NewSimulationScreen("UTF-8")
 	u.app.SetScreen(screen)
 	screen.SetSize(w, h)
 	term := &terminal{t: t, u: u, screen: screen, done: make(chan error, 1)}
-	go func() { term.done <- u.Run() }()
+	go func() { defer close(term.done); term.done <- u.Run() }()
 	t.Cleanup(func() {
-		u.app.Stop()
+		// Bound Stop itself too: a regression in draw/event locking must fail
+		// this fixture instead of hanging its cleanup until the package timeout.
+		go u.app.Stop()
 		select {
 		case err := <-term.done:
 			if err != nil {
@@ -82,10 +89,117 @@ func startTerminal(t *testing.T, w, h int) *terminal {
 		case <-time.After(2 * time.Second):
 			t.Error("terminal did not exit promptly")
 		}
-		u.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := u.core.Shutdown(ctx); err != nil {
+			t.Error(err)
+		}
 	})
 	term.wait("The Long Return")
 	return term
+}
+
+type heldDemo struct {
+	started, release chan struct{}
+	once             sync.Once
+}
+
+func (c *heldDemo) Complete(ctx context.Context, m project.Model, messages []model.Message, tools []model.Tool, limit int) (model.Response, error) {
+	c.once.Do(func() { close(c.started) })
+	select {
+	case <-ctx.Done():
+		return model.Response{}, ctx.Err()
+	case <-c.release:
+	}
+	return (model.Demo{}).Complete(ctx, m, messages, tools, limit)
+}
+
+func TestDetachedTerminalDoesNotOwnWorkerCompletion(t *testing.T) {
+	c := &heldDemo{started: make(chan struct{}), release: make(chan struct{})}
+	tt := startTerminal(t, 120, 40, c)
+	var release sync.Once
+	unblock := func() { release.Do(func() { close(c.release) }) }
+	defer unblock()
+	tt.onUI(func() { tt.u.generate(application.Selection{Scope: "branch", Target: "visit"}, false) })
+	select {
+	case <-c.started:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not start")
+	}
+	tt.u.app.Stop()
+	select {
+	case err := <-tt.done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal waited on worker")
+	}
+	if !tt.u.core.View().Busy {
+		t.Fatal("detaching terminal canceled worker")
+	}
+	unblock()
+	deadline := time.Now().Add(3 * time.Second)
+	for tt.u.core.View().Busy && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if tt.u.core.Status("visit") != "Available" {
+		t.Fatal("worker needed terminal callback to commit result")
+	}
+}
+
+func TestCancelAndQuitSavesConversationDraft(t *testing.T) {
+	started := make(chan struct{})
+	tt := startTerminal(t, 120, 40, cancelClient{started: started})
+	var id string
+	tt.onUI(func() {
+		c, err := tt.u.core.NewConversation("visit", "advice", "")
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		id = c.ID
+		tt.u.conversation = &c
+		tt.u.prompt.SetText("First message", false)
+		tt.u.send()
+		tt.u.prompt.SetText("Unsent thought while waiting", false)
+	})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not start")
+	}
+	tt.key(tcell.KeyCtrlC)
+	tt.click("Cancel and quit")
+	select {
+	case err := <-tt.done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancel and quit stalled")
+	}
+	c, err := tt.u.core.LoadConversation(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Draft != "Unsent thought while waiting" || len(c.Turns) != 2 {
+		t.Fatalf("quit lost conversation state: %+v", c)
+	}
+}
+
+func TestOutlineCompletionOpensInspector(t *testing.T) {
+	tt := startTerminal(t, 120, 40)
+	tt.onUI(func() { tt.u.startJob("outline", "visit", "", "Develop the cup detail") })
+	tt.wait("Import into brief")
+	tt.click("Import into brief")
+	tt.wait("Imported as authored outline")
+	tt.onUI(func() {
+		text, err := tt.u.core.Read("visit", "outline")
+		if err != nil || !strings.Contains(text, "DEMO outline proposal") {
+			t.Errorf("outline import failed: %v", err)
+		}
+	})
 }
 func (tt *terminal) text() string {
 	var b strings.Builder
@@ -158,14 +272,14 @@ func TestMouseEditingAndModifierCommands(t *testing.T) {
 	tt.key(tcell.KeyCtrlS)
 	tt.wait("1 changes")
 	tt.onUI(func() {
-		text, err := tt.u.store.Read("visit", "outline")
+		text, err := tt.u.core.Read("visit", "outline")
 		if err != nil {
 			t.Error(err)
 		}
 		if !strings.Contains(text, "Inserted text.") {
 			t.Error("text not saved")
 		}
-		if !tt.u.editing {
+		if !tt.u.state.Editing {
 			t.Error("save resumed generation")
 		}
 	})
@@ -197,15 +311,15 @@ func TestNarrowTerminalAndGeneration(t *testing.T) {
 	tt.click("This branch")
 	tt.wait("prose: Available")
 	tt.onUI(func() {
-		text, _ := tt.u.store.Read("visit", "prose")
+		text, _ := tt.u.core.Read("visit", "prose")
 		if !strings.Contains(text, "DEMO") {
 			t.Error("generated passage not saved")
 		}
-		runs, err := tt.u.store.Runs()
+		runs, err := tt.u.core.Runs()
 		if err != nil || len(runs) != 1 {
 			t.Errorf("run not persisted: %v", err)
 		}
-		if runs[0].Calls > tt.u.store.Config.Limits.Calls {
+		if runs[0].Calls > tt.u.state.Config.Limits.Calls {
 			t.Error("run exceeded budget")
 		}
 	})
@@ -238,14 +352,14 @@ func TestConversationScopeAndStagedEdits(t *testing.T) {
 	tt.key(tcell.KeyCtrlR)
 	tt.wait("edit: Available")
 	tt.onUI(func() {
-		text, _ := tt.u.store.Read("visit", "outline")
+		text, _ := tt.u.core.Read("visit", "outline")
 		if strings.Contains(text, "DEMO") {
 			t.Error("model proposal changed a source before Apply")
 		}
 		if tt.u.conversation.Target != "visit" || len(tt.u.conversation.Turns) != 2 {
 			t.Error("conversation lost its scope or turn history")
 		}
-		runs, err := tt.u.store.Runs()
+		runs, err := tt.u.core.Runs()
 		if err != nil || len(runs) != 1 {
 			t.Errorf("expected one saved run: %v", err)
 			return
@@ -256,12 +370,12 @@ func TestConversationScopeAndStagedEdits(t *testing.T) {
 	tt.click("Apply proposals")
 	tt.wait("Scoped edits applied")
 	tt.onUI(func() {
-		text, _ := tt.u.store.Read("visit", "outline")
-		other, _ := tt.u.store.Read("arrival", "outline")
+		text, _ := tt.u.core.Read("visit", "outline")
+		other, _ := tt.u.core.Read("arrival", "outline")
 		if !strings.Contains(text, "DEMO proposed outline") || strings.Contains(other, "DEMO") {
 			t.Error("proposal applied to the wrong source")
 		}
-		if !tt.u.editing || len(tt.u.store.State.Changes) != 1 {
+		if !tt.u.state.Editing || len(tt.u.state.State.Changes) != 1 {
 			t.Error("applying a proposal did not pause generation and record the change")
 		}
 	})

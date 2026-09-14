@@ -2,6 +2,8 @@
 
 This build concentrates on a usable end-to-end loop: author sources → select context/models → generate → review → inspect → revise sources → regenerate. It is not the complete scheduler in the longer-term UI design.
 
+The [application service](architecture.md) owns workflow state, worker execution and persistence. The TUI submits commands and renders detached state. A future interface can use the same core; no web server is included yet.
+
 ## Files
 
 ```text
@@ -48,7 +50,7 @@ Projects start paused. Save keeps them paused; Finish editing resolves each save
 
 One active operation locks source editing globally. Cancel clears the remaining queue and waits for the active call. Then edit and explicitly generate again. Subtree locks, cancel-on-edit for queued branches, and automatic re-queueing are not implemented.
 
-Conversations retain target, mode, model, turns, and draft. Browsing does not retarget them. Later turns receive current sources plus saved discussion. Tool models can read/search and propose replacements within the selected outline subtree or wiki entry; text-only edits propose one prepared replacement. Apply makes it authored source and refreshes views. Stale proposals are rejected when fingerprints differ.
+Conversations retain target, mode, model, turns, and draft. Browsing does not retarget them. Later turns receive current sources plus saved discussion. Interactive research and source editing require a tool-capable model; text-only models remain usable for prose, outline generation, and style review. Demo editing supplies a synthetic replacement. Apply makes it authored source and refreshes views. Stale proposals are rejected when fingerprints differ, and the entire set of proposals is validated for scope and permitted fields before writes start.
 
 Private notes are excluded from worker snapshots. Models have no arbitrary filesystem, shell, web-research, or history-read tools. The exposed tools are `read_entry`, `search_entries`, and scoped `propose_edit`. Diagnosis cannot yet query older run records through a tool; authors can inspect and quote that evidence.
 

@@ -59,8 +59,11 @@ make release
 
 - [Try it on Debian over SSH](docs/try-it.md)
 - [Implementation and current limits](docs/test-version.md)
+- [Application architecture and future interfaces](docs/architecture.md)
 - [Verification evidence](docs/test-verification.md)
 - [Longer-term UI design](docs/ui-design.md)
 - [Earlier browser interaction study](docs/ui-verification.md)
 
 The largest intentional limitation is coarse scheduling: one operation runs at a time, and source editing waits for cancellation/completion. A dependency scheduler, automatic multi-level expansion, resumable queues, streaming, and native provider-specific APIs remain future work. Recorded context summaries are inspectable history; this version does not automatically reuse them to skip computation. Passing reviewers is a model judgment, not proof of novel-wide continuity.
+
+The terminal uses an interface-independent application service. That service owns editing rules, queues, generation, cancellation and persistence; a future web interface can use the same operations. Headless tests verify that work completes without a terminal or progress listener attached.

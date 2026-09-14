@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/aipokalyptik/iterauthor/internal/application"
 	"github.com/aipokalyptik/iterauthor/internal/project"
 	"github.com/rivo/tview"
 )
@@ -39,13 +40,13 @@ func (u *UI) addChild() {
 		return
 	}
 	id := u.selected
-	n := u.store.Config.Nodes[id]
+	n := u.state.Config.Nodes[id]
 	if n == nil {
 		return
 	}
 	create := func(handling string) {
 		u.itemForm("Add child to "+n.Title, func(title, text string) error {
-			child, err := u.store.AddChild(id, title, text, handling)
+			child, err := u.core.AddChild(id, title, text, handling)
 			if err == nil {
 				u.selected = child
 				u.section = "Outline"
@@ -54,7 +55,7 @@ func (u *UI) addChild() {
 			return err
 		})
 	}
-	prose, err := u.store.Read(id, "prose")
+	prose, err := u.core.Read(id, "prose")
 	if err != nil {
 		u.error(err)
 		return
@@ -78,7 +79,7 @@ func (u *UI) addEntry() {
 	body := tview.NewTextArea().SetLabel("Entry: ").SetSize(12, 0)
 	f := tview.NewForm().AddFormItem(name).AddFormItem(kind).AddFormItem(body)
 	u.form("New knowledge entry", f, func() error {
-		id, err := u.store.AddEntry(name.GetText(), kind.GetText(), body.GetText())
+		id, err := u.core.AddEntry(name.GetText(), kind.GetText(), body.GetText())
 		if err == nil {
 			u.knowledge = id
 			u.section = "Knowledge"
@@ -92,13 +93,14 @@ func (u *UI) rename() {
 		return
 	}
 	id := u.currentID()
-	name := tview.NewInputField().SetLabel("Title: ").SetText(u.store.Config.TitleOf(id))
+	c := u.state.Config.Clone()
+	revision := u.state.ConfigVersion
+	name := tview.NewInputField().SetLabel("Title: ").SetText(u.state.Config.TitleOf(id))
 	f := tview.NewForm().AddFormItem(name)
 	u.form("Rename item", f, func() error {
 		if strings.TrimSpace(name.GetText()) == "" {
 			return fmt.Errorf("title is required")
 		}
-		c := u.store.Config.Clone()
 		if n := c.Nodes[id]; n != nil {
 			n.Title = name.GetText()
 		} else if e := c.Knowledge[id]; e != nil {
@@ -106,7 +108,7 @@ func (u *UI) rename() {
 		} else {
 			return fmt.Errorf("choose an outline or knowledge entry")
 		}
-		return u.store.SaveConfig(c, "Renamed item", id)
+		return u.core.SaveConfig(c, "Renamed item", id, revision)
 	})
 }
 func (u *UI) guidanceDialog() {
@@ -114,7 +116,8 @@ func (u *UI) guidanceDialog() {
 		return
 	}
 	id := u.selected
-	c := u.store.Config.Clone()
+	c := u.state.Config.Clone()
+	revision := u.state.ConfigVersion
 	n := c.Nodes[id]
 	if n == nil {
 		return
@@ -140,23 +143,16 @@ func (u *UI) guidanceDialog() {
 		f.AddDropDown(project.RoleNames[r], labels, index, func(_ string, i int) { n.Models[r] = ids[i] })
 	}
 	u.form("Local models and style mode", f, func() error {
-		for role, ref := range n.Models {
-			if ref != "" && requiresTools(role) && !c.Models[ref].Tools {
-				return fmt.Errorf("%s requires tools", project.RoleNames[role])
-			}
-		}
-		return u.store.SaveConfig(c, "Changed inherited guidance", id)
+		return u.core.SaveConfig(c, "Changed inherited guidance", id, revision)
 	})
-}
-func requiresTools(role string) bool {
-	return role == "knowledge" || role == "outline-context" || role == "consistency"
 }
 func (u *UI) promptDialog() {
 	if !u.writable() {
 		return
 	}
 	id := u.selected
-	c := u.store.Config.Clone()
+	c := u.state.Config.Clone()
+	revision := u.state.ConfigVersion
 	n := c.Nodes[id]
 	if n == nil {
 		return
@@ -177,7 +173,7 @@ func (u *UI) promptDialog() {
 	}).AddFormItem(text)
 	u.form("Inherited operation instructions", f, func() error {
 		n.Prompts[role] = text.GetText()
-		return u.store.SaveConfig(c, "Changed operation instructions", id)
+		return u.core.SaveConfig(c, "Changed operation instructions", id, revision)
 	})
 }
 func (u *UI) contextDialog() {
@@ -185,7 +181,8 @@ func (u *UI) contextDialog() {
 		return
 	}
 	id := u.selected
-	c := u.store.Config.Clone()
+	c := u.state.Config.Clone()
+	revision := u.state.ConfigVersion
 	n := c.Nodes[id]
 	if n == nil {
 		return
@@ -210,17 +207,18 @@ func (u *UI) contextDialog() {
 	}
 	add("Automatic knowledge", &n.AutoKnowledge)
 	add("Automatic outline summaries", &n.AutoOutline)
-	u.form("Automatic context selection", f, func() error { return u.store.SaveConfig(c, "Changed automatic context", id) })
+	u.form("Automatic context selection", f, func() error { return u.core.SaveConfig(c, "Changed automatic context", id, revision) })
 }
 func (u *UI) attachDialog() {
 	if !u.writable() {
 		return
 	}
 	target := u.selected
-	if u.store.Config.Nodes[target] == nil {
+	if u.state.Config.Nodes[target] == nil {
 		return
 	}
-	c := u.store.Config.Clone()
+	c := u.state.Config.Clone()
+	revision := u.state.ConfigVersion
 	var ids, labels []string
 	for id := range c.Knowledge {
 		ids = append(ids, id)
@@ -253,7 +251,7 @@ func (u *UI) attachDialog() {
 			}
 		}
 		c.Nodes[target].Attachments = append(c.Nodes[target].Attachments, project.Attachment{ID: ref, Descendants: desc && c.Nodes[ref] != nil})
-		return u.store.SaveConfig(c, "Attached "+c.TitleOf(ref), target)
+		return u.core.SaveConfig(c, "Attached "+c.TitleOf(ref), target, revision)
 	})
 }
 func (u *UI) removeAttachment() {
@@ -261,18 +259,20 @@ func (u *UI) removeAttachment() {
 		return
 	}
 	id := u.selected
-	n := u.store.Config.Nodes[id]
+	c := u.state.Config.Clone()
+	revision := u.state.ConfigVersion
+	n := c.Nodes[id]
 	if n == nil {
 		return
 	}
 	list := tview.NewList().ShowSecondaryText(true)
 	for i, a := range n.Attachments {
 		idx := i
-		list.AddItem(u.store.Config.TitleOf(a.ID), "Remove this local attachment", 0, func() {
-			c := u.store.Config.Clone()
+		list.AddItem(u.state.Config.TitleOf(a.ID), "Remove this local attachment", 0, func() {
+			c := c.Clone()
 			refs := c.Nodes[id].Attachments
 			c.Nodes[id].Attachments = append(refs[:idx], refs[idx+1:]...)
-			if err := u.store.SaveConfig(c, "Removed context attachment", id); err != nil {
+			if err := u.core.SaveConfig(c, "Removed context attachment", id, revision); err != nil {
 				u.error(err)
 				return
 			}
@@ -289,9 +289,9 @@ func (u *UI) modelMenu() {
 		return
 	}
 	list := tview.NewList().ShowSecondaryText(true)
-	for _, id := range u.store.Config.ModelIDs() {
+	for _, id := range u.state.Config.ModelIDs() {
 		ref := id
-		m := u.store.Config.Models[id]
+		m := u.state.Config.Models[id]
 		list.AddItem(m.Name+" ["+id+"]", m.URL+" · "+m.Model, 0, func() { u.closeDialog(); u.modelDialog(ref) })
 	}
 	list.AddItem("Add connection", "Each connection can point at a different local/LAN/hosted model.", 0, func() { u.closeDialog(); u.modelDialog("") })
@@ -300,7 +300,8 @@ func (u *UI) modelMenu() {
 	u.showDialog(list, 90, 24, list)
 }
 func (u *UI) modelDialog(id string) {
-	c := u.store.Config.Clone()
+	c := u.state.Config.Clone()
+	revision := u.state.ConfigVersion
 	m := c.Models[id]
 	if id == "" {
 		id = project.NewID()
@@ -319,21 +320,19 @@ func (u *UI) modelDialog(id string) {
 		if strings.TrimSpace(m.Name) == "" || strings.TrimSpace(m.Model) == "" {
 			return fmt.Errorf("label and model identifier are required")
 		}
-		if base && !m.Tools {
-			return fmt.Errorf("the base model must support tools")
-		}
 		c.Models[id] = m
 		if base {
 			c.BaseModel = id
 		}
-		return u.store.SaveConfig(c, "Changed model connection", c.Root)
+		return u.core.SaveConfig(c, "Changed model connection", c.Root, revision)
 	})
 }
 func (u *UI) defaultsDialog() {
 	if !u.writable() {
 		return
 	}
-	c := u.store.Config.Clone()
+	c := u.state.Config.Clone()
+	revision := u.state.ConfigVersion
 	if c.Defaults == nil {
 		c.Defaults = map[string]string{}
 	}
@@ -354,19 +353,15 @@ func (u *UI) defaultsDialog() {
 		f.AddDropDown(project.RoleNames[r], labels, index, func(_ string, i int) { c.Defaults[r] = ids[i] })
 	}
 	u.form("Feature model defaults", f, func() error {
-		for r, id := range c.Defaults {
-			if id != "" && requiresTools(r) && !c.Models[id].Tools {
-				return fmt.Errorf("%s requires tools", project.RoleNames[r])
-			}
-		}
-		return u.store.SaveConfig(c, "Changed feature model defaults", c.Root)
+		return u.core.SaveConfig(c, "Changed feature model defaults", c.Root, revision)
 	})
 }
 func (u *UI) limitsDialog() {
 	if !u.writable() {
 		return
 	}
-	c := u.store.Config.Clone()
+	c := u.state.Config.Clone()
+	revision := u.state.ConfigVersion
 	f := tview.NewForm()
 	add := func(label string, value *int) {
 		f.AddInputField(label, strconv.Itoa(*value), 10, tview.InputFieldInteger, func(v string) { *value, _ = strconv.Atoi(v) })
@@ -377,39 +372,35 @@ func (u *UI) limitsDialog() {
 	add("Input characters per call", &c.Limits.ContextChars)
 	add("Minutes per operation", &c.Limits.Minutes)
 	f.AddCheckbox("Generate when editing is finished", c.AutoGenerate, func(v bool) { c.AutoGenerate = v })
-	u.form("Generation limits", f, func() error { return u.store.SaveConfig(c, "Changed generation limits", c.Root) })
+	u.form("Generation limits", f, func() error { return u.core.SaveConfig(c, "Changed generation limits", c.Root, revision) })
 }
 
 func (u *UI) changes() {
 	if !u.writable() {
 		return
 	}
-	if len(u.store.State.Changes) == 0 {
+	if len(u.state.State.Changes) == 0 {
 		u.message("Saved changes", "No unresolved changes. Use Finish editing to release the pause.")
 		return
 	}
 	list := tview.NewList().ShowSecondaryText(true)
-	for i, c := range u.store.State.Changes {
-		index := i
-		list.AddItem(u.store.Config.TitleOf(c.Target), c.Description, 0, func() { u.closeDialog(); u.decideChange(index) })
+	for _, c := range u.state.State.Changes {
+		change := c
+		list.AddItem(u.state.Config.TitleOf(c.Target), c.Description, 0, func() { u.closeDialog(); u.decideChange(change) })
 	}
 	list.AddItem("Keep existing prose for ALL changes", "Explicitly retain current text; recorded inputs remain historical.", 0, func() {
-		for len(u.store.State.Changes) > 0 {
-			if err := u.store.Decide(0, "keep", nil); err != nil {
-				u.error(err)
-				return
-			}
+		if err := u.core.DecideAll("keep"); err != nil {
+			u.error(err)
+			return
 		}
 		u.closeDialog()
 		u.refresh()
 		u.notice("Choices saved. Finish editing when ready.")
 	})
 	list.AddItem("Invalidate entire story for ALL changes", "Authored prose stays protected; generation creates candidates.", 0, func() {
-		for len(u.store.State.Changes) > 0 {
-			if err := u.store.Decide(0, "story", u.store.Config.Leaves(u.store.Config.Root)); err != nil {
-				u.error(err)
-				return
-			}
+		if err := u.core.DecideAll("story"); err != nil {
+			u.error(err)
+			return
 		}
 		u.closeDialog()
 		u.refresh()
@@ -418,13 +409,12 @@ func (u *UI) changes() {
 	list.SetBorder(true).SetTitle(" Saved changes · each needs a decision ")
 	u.showDialog(list, 90, 28, list)
 }
-func (u *UI) decideChange(index int) {
-	c := u.store.State.Changes[index]
+func (u *UI) decideChange(c project.Change) {
 	branchLabel := "This branch"
-	if u.store.Config.Knowledge[c.Target] != nil {
+	if u.state.Config.Knowledge[c.Target] != nil {
 		branchLabel = "Linked passages"
 	}
-	u.choice("Reconsider generated prose", u.store.Config.TitleOf(c.Target)+"\n"+c.Description, []string{"Keep", branchLabel, "Selected passages", "Entire story", "Back"}, func(i int) {
+	u.choice("Reconsider generated prose", u.state.Config.TitleOf(c.Target)+"\n"+c.Description, []string{"Keep", branchLabel, "Selected passages", "Entire story", "Back"}, func(i int) {
 		if i == 4 {
 			return
 		}
@@ -433,21 +423,9 @@ func (u *UI) decideChange(index int) {
 		switch i {
 		case 1:
 			choice = "branch"
-			if u.store.Config.Nodes[c.Target] != nil {
-				ids = u.store.Config.Leaves(c.Target)
-			} else {
-				for id := range u.store.Config.Nodes {
-					for _, ref := range u.store.Config.Required(id) {
-						if ref == c.Target {
-							ids = append(ids, u.store.Config.Leaves(id)...)
-							break
-						}
-					}
-				}
-			}
 		case 2:
 			u.selectPassages("Select affected passages", func(ids []string) {
-				if err := u.store.Decide(index, "selected", ids); err != nil {
+				if err := u.core.Decide(c.ID, "selected", ids); err != nil {
 					u.error(err)
 					return
 				}
@@ -456,9 +434,8 @@ func (u *UI) decideChange(index int) {
 			return
 		case 3:
 			choice = "story"
-			ids = u.store.Config.Leaves(u.store.Config.Root)
 		}
-		if err := u.store.Decide(index, choice, ids); err != nil {
+		if err := u.core.Decide(c.ID, choice, ids); err != nil {
 			u.error(err)
 			return
 		}
@@ -469,13 +446,13 @@ func (u *UI) decideChange(index int) {
 func (u *UI) selectPassages(title string, done func([]string)) {
 	selected := map[string]bool{}
 	f := tview.NewForm()
-	for _, id := range u.store.Config.Leaves(u.store.Config.Root) {
+	for _, id := range u.state.Config.Leaves(u.state.Config.Root) {
 		ref := id
-		f.AddCheckbox(u.store.Config.TitleOf(id), false, func(v bool) { selected[ref] = v })
+		f.AddCheckbox(u.state.Config.TitleOf(id), false, func(v bool) { selected[ref] = v })
 	}
 	f.AddButton("Apply", func() {
 		var ids []string
-		for _, id := range u.store.Config.Leaves(u.store.Config.Root) {
+		for _, id := range u.state.Config.Leaves(u.state.Config.Root) {
 			if selected[id] {
 				ids = append(ids, id)
 			}
@@ -495,25 +472,24 @@ func (u *UI) invalidateDialog() {
 		return
 	}
 	id := u.selected
-	u.choice("Invalidate prose", u.store.Config.TitleOf(id)+"\nOld text stays inspectable. Authored text remains protected.", []string{"This branch", "Selected passages", "Entire story", "Back"}, func(i int) {
-		var ids []string
+	u.choice("Invalidate prose", u.state.Config.TitleOf(id)+"\nOld text stays inspectable. Authored text remains protected.", []string{"This branch", "Selected passages", "Entire story", "Back"}, func(i int) {
+		selection := application.Selection{Scope: "branch", Target: id}
 		switch i {
 		case 0:
-			ids = u.store.Config.Leaves(id)
 		case 1:
 			u.selectPassages("Invalidate selected passages", func(ids []string) {
-				if err := u.store.Invalidate(ids); err != nil {
+				if err := u.core.Invalidate(application.Selection{Scope: "selected", IDs: ids}); err != nil {
 					u.error(err)
 				}
 				u.refresh()
 			})
 			return
 		case 2:
-			ids = u.store.Config.Leaves(u.store.Config.Root)
+			selection.Scope = "story"
 		default:
 			return
 		}
-		if err := u.store.Invalidate(ids); err != nil {
+		if err := u.core.Invalidate(selection); err != nil {
 			u.error(err)
 		}
 		u.refresh()
@@ -523,23 +499,19 @@ func (u *UI) invalidateCache() {
 	if !u.writable() {
 		return
 	}
-	runs, err := u.store.Runs()
+	runs, err := u.core.Runs()
 	if err != nil {
 		u.error(err)
 		return
 	}
 	list := tview.NewList().ShowSecondaryText(true)
 	for _, r := range runs {
-		if !u.store.Config.Contains(u.selected, r.Target) {
+		if !u.state.Config.Contains(u.selected, r.Target) {
 			continue
 		}
 		run := r
-		list.AddItem(run.Kind+" · "+u.store.Config.TitleOf(run.Target), run.Started+" · "+run.Status, 0, func() {
-			u.store.State.InvalidRuns[run.ID] = true
-			if run.Kind == "prose" {
-				_ = u.store.Invalidate([]string{run.Target})
-			}
-			if err := u.store.SaveState(); err != nil {
+		list.AddItem(run.Kind+" · "+u.state.Config.TitleOf(run.Target), run.Started+" · "+run.Status, 0, func() {
+			if err := u.core.InvalidateRun(run.ID); err != nil {
 				u.error(err)
 				return
 			}
@@ -570,27 +542,19 @@ func (u *UI) openProject(create bool) {
 		if dir == "" {
 			return fmt.Errorf("directory is required")
 		}
-		var next *project.Store
-		var err error
-		if create {
-			next, err = project.Create(dir, title, false)
-		} else {
-			next, err = project.Open(dir)
-		}
-		if err != nil {
-			return err
-		}
 		if u.conversation != nil {
-			if err = u.store.SaveConversation(*u.conversation); err != nil {
-				next.Close()
+			if err := u.core.SaveDraft(u.conversation.ID, u.prompt.GetText()); err != nil {
 				return err
 			}
 		}
-		u.store.Close()
-		u.store = next
-		u.selected = next.Config.Root
+		if err := u.core.SwitchProject(dir, title, create); err != nil {
+			return err
+		}
+		u.state = u.core.View()
+		u.presentedRun = ""
+		u.selected = u.state.Config.Root
 		u.knowledge = ""
-		for id := range next.Config.Knowledge {
+		for id := range u.state.Config.Knowledge {
 			u.knowledge = id
 			break
 		}

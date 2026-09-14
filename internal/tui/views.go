@@ -17,10 +17,10 @@ func (u *UI) rebuildTree() {
 	if u.section == "Outline" || u.section == "Manuscript" {
 		var add func(string) *tview.TreeNode
 		add = func(id string) *tview.TreeNode {
-			n := u.store.Config.Nodes[id]
+			n := u.state.Config.Nodes[id]
 			title := n.Title
 			if len(n.Children) == 0 {
-				title += " · " + u.store.Status(id)
+				title += " · " + u.core.Status(id)
 			}
 			row := tview.NewTreeNode(title).SetReference(id).SetExpanded(true)
 			if id == u.selected {
@@ -31,15 +31,15 @@ func (u *UI) rebuildTree() {
 			}
 			return row
 		}
-		root = add(u.store.Config.Root)
+		root = add(u.state.Config.Root)
 	} else if u.section == "Knowledge" {
 		var ids []string
-		for id := range u.store.Config.Knowledge {
+		for id := range u.state.Config.Knowledge {
 			ids = append(ids, id)
 		}
-		sort.Slice(ids, func(i, j int) bool { return u.store.Config.TitleOf(ids[i]) < u.store.Config.TitleOf(ids[j]) })
+		sort.Slice(ids, func(i, j int) bool { return u.state.Config.TitleOf(ids[i]) < u.state.Config.TitleOf(ids[j]) })
 		for _, id := range ids {
-			e := u.store.Config.Knowledge[id]
+			e := u.state.Config.Knowledge[id]
 			row := tview.NewTreeNode(e.Title + " · " + e.Kind).SetReference(id)
 			root.AddChild(row)
 			if id == u.knowledge {
@@ -80,7 +80,7 @@ func (u *UI) renderDocument() {
 	u.documentMain = u.view
 	u.document.Clear()
 	u.tabbar.Clear()
-	u.document.SetTitle(" " + u.section + " / " + clean(u.store.Config.TitleOf(u.currentID())) + " ")
+	u.document.SetTitle(" " + u.section + " / " + clean(u.state.Config.TitleOf(u.currentID())) + " ")
 	var tabs []string
 	if u.section == "Outline" {
 		tabs = []string{"Outline", "Prose", "Guidance", "Context", "History", "Notes"}
@@ -113,7 +113,7 @@ func (u *UI) renderDocument() {
 		return
 	}
 	if u.section == "Manuscript" {
-		u.view.SetText(clean(u.store.Manuscript()))
+		u.view.SetText(clean(u.core.Manuscript()))
 		u.document.AddItem(u.view, 0, 1, true)
 		u.actions([]string{"Open selected source", "Export manuscript"}, []func(){func() { u.navigate("Outline", u.selected); u.tab = "Prose"; u.renderDocument() }, u.export})
 		return
@@ -132,7 +132,7 @@ func (u *UI) renderDocument() {
 	case "Outline", "Entry", "Notes":
 		field := u.field()
 		var err error
-		text, err = u.store.Read(id, field)
+		text, err = u.core.Read(id, field)
 		if err != nil {
 			text = err.Error()
 		}
@@ -145,20 +145,20 @@ func (u *UI) renderDocument() {
 		labels = []string{"Edit", "Discuss", "Actions"}
 		funcs = []func(){u.edit, u.newConversation, u.commandMenu}
 	case "Prose":
-		n := u.store.Config.Nodes[id]
+		n := u.state.Config.Nodes[id]
 		if n == nil {
 			break
 		}
 		if len(n.Children) > 0 {
-			for _, leaf := range u.store.Config.Leaves(id) {
-				prose, _ := u.store.Read(leaf, "prose")
-				text += "## " + u.store.Config.TitleOf(leaf) + " · " + u.store.Status(leaf) + "\n\n" + prose + "\n\n"
+			for _, leaf := range u.state.Config.Leaves(id) {
+				prose, _ := u.core.Read(leaf, "prose")
+				text += "## " + u.state.Config.TitleOf(leaf) + " · " + u.core.Status(leaf) + "\n\n" + prose + "\n\n"
 			}
 			labels = []string{"Generate branch", "Regenerate branch"}
 			funcs = []func(){func() { u.generationDialog(false) }, func() { u.generationDialog(true) }}
 		} else {
-			prose, _ := u.store.Read(id, "prose")
-			text = u.store.Status(id) + "\n\n" + prose
+			prose, _ := u.core.Read(id, "prose")
+			text = u.core.Status(id) + "\n\n" + prose
 			if prose == "" {
 				text = "Missing passage. Generate from this leaf's complete drafting brief."
 			}
@@ -166,7 +166,7 @@ func (u *UI) renderDocument() {
 			funcs = []func(){u.edit, func() { u.generationDialog(false) }, func() { u.generationDialog(true) }, func() { u.reviewLatest(id) }}
 		}
 	case "Guidance":
-		snap, err := u.store.Snapshot()
+		snap, err := u.core.Snapshot()
 		if err != nil {
 			text = err.Error()
 		} else {
@@ -185,7 +185,7 @@ func (u *UI) renderDocument() {
 		labels = []string{"Edit local style", "Models/style mode", "Operation prompt"}
 		funcs = []func(){u.edit, u.guidanceDialog, u.promptDialog}
 	case "Context":
-		c := u.store.Config
+		c := u.state.Config
 		text = "AUTOMATIC CONTEXT\n"
 		for _, kind := range []string{"knowledge", "outline"} {
 			enabled, origin := c.Automatic(id, kind)
@@ -206,7 +206,7 @@ func (u *UI) renderDocument() {
 		funcs = []func(){u.contextDialog, u.attachDialog, u.removeAttachment}
 	case "Links":
 		text = "Explicit outline consumers:\n\n"
-		for nodeID, n := range u.store.Config.Nodes {
+		for nodeID, n := range u.state.Config.Nodes {
 			for _, a := range n.Attachments {
 				if a.ID == id {
 					text += n.Title + " [" + nodeID + "]\n"
@@ -232,7 +232,7 @@ func (u *UI) actions(labels []string, functions []func()) {
 	u.document.AddItem(bar, 1, 0, false)
 }
 func (u *UI) history(id string) {
-	runs, err := u.store.Runs()
+	runs, err := u.core.Runs()
 	if err != nil {
 		u.error(err)
 		return
@@ -248,7 +248,7 @@ func (u *UI) history(id string) {
 		if r.Finished == "" {
 			status = "Interrupted"
 		}
-		if u.store.State.InvalidRuns[r.ID] {
+		if u.state.State.InvalidRuns[r.ID] {
 			status = "Invalidated"
 		}
 		list.AddItem(r.Kind+" · "+status, r.Started, 0, func() { u.inspectRun(run) })
@@ -259,7 +259,7 @@ func (u *UI) history(id string) {
 	u.actions([]string{"Edit source", "Invalidate generated cache"}, []func(){u.edit, u.invalidateCache})
 }
 func (u *UI) activity() {
-	runs, err := u.store.Runs()
+	runs, err := u.core.Runs()
 	if err != nil {
 		u.view.SetText(err.Error())
 		u.document.AddItem(u.view, 0, 1, true)
@@ -267,21 +267,21 @@ func (u *UI) activity() {
 	}
 	u.runs = runs
 	list := tview.NewList().ShowSecondaryText(true)
-	if u.busy {
+	if u.state.Busy {
 		list.AddItem("Running: "+u.progress, "Cancel stops the active call and clears the queue.", 0, func() { u.stopWork() })
 	}
-	for _, id := range u.queue {
-		list.AddItem("Queued: "+u.store.Config.TitleOf(id), "Use Cancel work to stop the remaining queue.", 0, nil)
+	for _, id := range u.state.Queue {
+		list.AddItem("Queued: "+u.state.Config.TitleOf(id), "Use Cancel work to stop the remaining queue.", 0, nil)
 	}
 	for _, r := range runs {
 		run := r
 		status := r.Status
-		if r.Finished == "" && !u.busy {
+		if r.Finished == "" && !u.state.Busy {
 			status = "Interrupted"
 		}
-		list.AddItem(u.store.Config.TitleOf(r.Target)+" · "+r.Kind+" · "+status, fmt.Sprintf("%d calls · %d reported tokens · %s", r.Calls, r.Tokens, r.Started), 0, func() { u.inspectRun(run) })
+		list.AddItem(u.state.Config.TitleOf(r.Target)+" · "+r.Kind+" · "+status, fmt.Sprintf("%d calls · %d reported tokens · %s", r.Calls, r.Tokens, r.Started), 0, func() { u.inspectRun(run) })
 	}
-	if len(runs) == 0 && !u.busy {
+	if len(runs) == 0 && !u.state.Busy {
 		list.AddItem("No operations yet", "Generate a leaf or start a focused conversation.", 0, nil)
 	}
 	u.documentMain = list
@@ -289,9 +289,9 @@ func (u *UI) activity() {
 	u.actions([]string{"Refresh", "Cancel work", "Review saved changes"}, []func(){func() { u.renderDocument() }, u.stopWork, u.changes})
 }
 func (u *UI) settingsView() {
-	c := u.store.Config
+	c := u.state.Config
 	var b strings.Builder
-	fmt.Fprintf(&b, "PROJECT\n%s\n%s\n\nMODEL CONNECTIONS\n", c.Title, u.store.Dir)
+	fmt.Fprintf(&b, "PROJECT\n%s\n%s\n\nMODEL CONNECTIONS\n", c.Title, u.state.Dir)
 	for _, id := range c.ModelIDs() {
 		m := c.Models[id]
 		mark := ""
@@ -304,7 +304,7 @@ func (u *UI) settingsView() {
 	b.WriteString("\nEndpoints are reached from this machine. API credentials are environment variables, not story files.\n\nOne operation runs at a time. Queues are explicit and canceled before editing. Pricing is not available; call/output/time caps bound usage.")
 	u.view.SetText(b.String())
 	u.document.AddItem(u.view, 0, 1, true)
-	u.actions([]string{"Models", "Feature defaults", "Limits", "Test base tools"}, []func(){u.modelMenu, u.defaultsDialog, u.limitsDialog, func() { u.startJob("test", u.store.Config.Root, u.store.Config.BaseModel, "", nil) }})
+	u.actions([]string{"Models", "Feature defaults", "Limits", "Test base tools"}, []func(){u.modelMenu, u.defaultsDialog, u.limitsDialog, func() { u.startJob("test", u.state.Config.Root, u.state.Config.BaseModel, "") }})
 }
 func (u *UI) renderAssistant() {
 	u.assistant.Clear()
@@ -317,7 +317,7 @@ func (u *UI) renderAssistant() {
 	if c.Mode == "edit" {
 		verb = "Edits"
 	}
-	u.assistant.SetTitle(" " + verb + ": " + clean(u.store.Config.TitleOf(c.Target)) + " · " + c.Mode + " · " + clean(u.store.Config.Models[c.Model].Name) + " ")
+	u.assistant.SetTitle(" " + verb + ": " + clean(u.state.Config.TitleOf(c.Target)) + " · " + c.Mode + " · " + clean(u.state.Config.Models[c.Model].Name) + " ")
 	var b strings.Builder
 	for _, turn := range c.Turns {
 		fmt.Fprintf(&b, "%s: %s\n\n", turn.Role, turn.Text)
@@ -344,7 +344,7 @@ type command struct {
 func (u *UI) commands() []command {
 	local := u.section == "Outline" || u.section == "Knowledge"
 	outline := u.section == "Outline"
-	can := !u.busy
+	can := !u.state.Busy
 	return []command{
 		{"Edit current field", "This source; story generation stays paused", u.edit, local && can},
 		{"Discuss current item", "Start a conversation with an explicit scope", u.newConversation, local && can},
@@ -363,7 +363,7 @@ func (u *UI) commands() []command {
 		{"Export working manuscript", "Write exports/manuscript.md and its manifest", u.export, can},
 		{"Browse navigator", "Useful in a narrow terminal", func() { u.navOnly = true; u.compactAssistant = false; u.layout(); u.app.SetFocus(u.tree) }, true},
 		{"Assistant sessions", "Resume a saved conversation without retargeting", u.sessionMenu, can},
-		{"Cancel active work", "Wait for cancellation before editing", u.stopWork, u.busy},
+		{"Cancel active work", "Wait for cancellation before editing", u.stopWork, u.state.Busy},
 		{"Help", "Keys, editing, model connections and limits", u.help, true},
 	}
 }
@@ -396,35 +396,38 @@ func (u *UI) commandMenu() {
 	}
 	query.SetChangedFunc(refresh).SetDoneFunc(func(key tcell.Key) { u.app.SetFocus(list) })
 	panel := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(query, 1, 0, true).AddItem(list, 0, 1, false).AddItem(u.button("Back", u.closeDialog), 1, 0, false)
-	panel.SetBorder(true).SetTitle(" Commands · " + clean(u.store.Config.TitleOf(u.currentID())) + " ")
+	panel.SetBorder(true).SetTitle(" Commands · " + clean(u.state.Config.TitleOf(u.currentID())) + " ")
 	refresh("")
 	u.showDialog(panel, 90, 28, query)
 }
 func (u *UI) execute(cmd string) {
 	if cmd == "mode" {
-		if u.busy {
+		if u.state.Busy {
 			u.stopWork()
 			return
 		}
-		if u.editing {
+		if u.state.Editing {
 			if u.editor != nil {
 				u.notice("Save or cancel the open buffer first.")
 				return
 			}
-			if len(u.store.State.Changes) > 0 {
+			if len(u.state.State.Changes) > 0 {
 				u.changes()
 				return
 			}
-			u.editing = false
-			u.chrome()
-			u.notice("Editing finished. Use Generate or Regenerate when ready.")
-			if u.store.Config.AutoGenerate {
-				u.beginQueue(u.eligible(u.store.Config.Leaves(u.store.Config.Root), false))
+			if err := u.core.FinishEditing(); err != nil {
+				u.error(err)
+				return
 			}
+			u.notice("Editing finished. Use Generate or Regenerate when ready.")
 		} else {
-			u.editing = true
+			if err := u.core.BeginEditing(); err != nil {
+				u.error(err)
+				return
+			}
 			u.notice("Editing started. Generation is paused.")
 		}
+		u.refresh()
 	}
 }
 func (u *UI) projectMenu() {

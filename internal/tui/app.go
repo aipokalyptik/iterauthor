@@ -1,60 +1,50 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
-	"sync/atomic"
-	"time"
+	"sync"
 
-	"github.com/aipokalyptik/iterauthor/internal/model"
+	"github.com/aipokalyptik/iterauthor/internal/application"
 	"github.com/aipokalyptik/iterauthor/internal/project"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
 type UI struct {
-	documentMain                                               tview.Primitive
-	app                                                        *tview.Application
-	store                                                      *project.Store
-	client                                                     model.Client
-	demo                                                       bool
-	pages                                                      *tview.Pages
-	root, work, document, tabbar, assistant                    *tview.Flex
-	tree                                                       *tview.TreeView
-	view, log, status, title                                   *tview.TextView
-	prompt, editor                                             *tview.TextArea
-	modeButton                                                 *tview.Button
-	section, selected, knowledge, tab                          string
-	editing, busy, assistantVisible, navOnly, compactAssistant bool
-	width, height                                              int
-	editID, editField, editOriginal                            string
-	dialog                                                     bool
-	returnFocus                                                tview.Primitive
-	conversation                                               *project.Conversation
-	cancel                                                     context.CancelFunc
-	closed                                                     atomic.Bool
-	quitPending                                                bool
-	progress                                                   string
-	queue                                                      []string
-	queueCalls                                                 int
-	queueDeadline                                              time.Time
-	queueCancel                                                context.CancelFunc
-	queueContext                                               context.Context
-	focusables                                                 []tview.Primitive
-	runs                                                       []project.Run
-	layoutState                                                string
+	documentMain                                tview.Primitive
+	app                                         *tview.Application
+	core                                        *application.Service
+	state                                       application.View
+	screenMu                                    sync.Mutex
+	screen                                      tcell.Screen
+	presentedRun                                string
+	pages                                       *tview.Pages
+	root, work, document, tabbar, assistant     *tview.Flex
+	tree                                        *tview.TreeView
+	view, log, status, title                    *tview.TextView
+	prompt, editor                              *tview.TextArea
+	modeButton                                  *tview.Button
+	section, selected, knowledge, tab           string
+	assistantVisible, navOnly, compactAssistant bool
+	width, height                               int
+	editID, editField, editOriginal             string
+	dialog                                      bool
+	returnFocus                                 tview.Primitive
+	conversation                                *project.Conversation
+	quitPending                                 bool
+	progress                                    string
+	focusables                                  []tview.Primitive
+	runs                                        []project.Run
+	layoutState                                 string
 }
 
-func New(s *project.Store, demo bool) *UI {
-	u := &UI{store: s, demo: demo, section: "Outline", selected: s.Config.Root, tab: "Outline", editing: true, client: model.NewHTTP()}
-	if demo {
-		u.client = model.Demo{}
-	}
-	for id := range s.Config.Knowledge {
+func New(core *application.Service) *UI {
+	state := core.View()
+	u := &UI{core: core, state: state, section: "Outline", selected: state.Config.Root, tab: "Outline"}
+	for id := range state.Config.Knowledge {
 		u.knowledge = id
 		break
 	}
@@ -113,6 +103,14 @@ func New(s *project.Store, demo bool) *UI {
 	})
 	u.app.SetRoot(u.pages, true).SetInputCapture(u.key)
 	u.app.SetBeforeDrawFunc(func(screen tcell.Screen) bool {
+		u.screenMu.Lock()
+		u.screen = screen
+		u.screenMu.Unlock()
+		// Drawing holds tview's application lock. Only enqueue a wakeup here;
+		// refreshing views, changing focus, and stopping belong to key handling.
+		if u.core.Revision() != u.state.Revision {
+			_ = screen.PostEvent(tcell.NewEventKey(tcell.KeyNUL, 0, tcell.ModNone))
+		}
 		w, h := screen.Size()
 		if w != u.width || h != u.height {
 			u.width, u.height = w, h
@@ -124,22 +122,34 @@ func New(s *project.Store, demo bool) *UI {
 	u.app.SetFocus(u.tree)
 	return u
 }
+
+// Notifications only request a redraw. PostEvent is nonblocking, unlike tview's
+// QueueUpdateDraw, so a stopped terminal cannot strand a worker or UI observer.
 func (u *UI) Run() error {
-	defer u.closed.Store(true)
-	defer func() {
-		if u.cancel != nil {
-			u.cancel()
-		}
-		if u.queueCancel != nil {
-			u.queueCancel()
-		}
-		if u.conversation != nil {
-			_ = u.store.SaveConversation(*u.conversation)
+	events, unsubscribe := u.core.Subscribe()
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			case _, ok := <-events:
+				if !ok {
+					return
+				}
+				u.screenMu.Lock()
+				screen := u.screen
+				u.screenMu.Unlock()
+				if screen != nil {
+					_ = screen.PostEvent(tcell.NewEventKey(tcell.KeyNUL, 0, tcell.ModNone))
+				}
+			}
 		}
 	}()
+	defer func() { close(stop); unsubscribe(); <-done }()
 	return u.app.Run()
 }
-func (u *UI) Close()                          { u.store.Close() }
 func (u *UI) Application() *tview.Application { return u.app }
 func (u *UI) button(label string, fn func()) *tview.Button {
 	b := tview.NewButton(tview.Escape(label)).SetSelectedFunc(fn)
@@ -156,24 +166,38 @@ func (u *UI) notice(s string) { u.progress = s; u.chrome() }
 func (u *UI) chrome() {
 	mode := "READY"
 	label := "Begin editing"
-	if u.editing {
+	if u.state.Editing {
 		mode = "EDITING"
 		label = "Finish editing"
 	}
-	if u.busy {
+	if u.state.Busy {
 		mode = "WORKING"
 		label = "Cancel work"
 	}
 	u.modeButton.SetLabel(label)
 	demo := ""
-	if u.demo {
+	if u.state.Demo {
 		demo = " · DEMO MODEL"
 	}
-	u.title.SetText(fmt.Sprintf(" Iterauthor · %s · %s%s", u.store.Config.Title, mode, demo))
-	target := u.store.Config.TitleOf(u.currentID())
-	u.status.SetText(fmt.Sprintf(" %s · %d changes · %s", target, len(u.store.State.Changes), u.progress))
+	u.title.SetText(fmt.Sprintf(" Iterauthor · %s · %s%s", u.state.Config.Title, mode, demo))
+	target := u.state.Config.TitleOf(u.currentID())
+	u.status.SetText(fmt.Sprintf(" %s · %d changes · %s", target, len(u.state.State.Changes), u.progress))
+}
+func (u *UI) syncState() {
+	state := u.core.View()
+	if state.Progress != u.state.Progress {
+		u.progress = state.Progress
+	}
+	if state.LastRun != u.state.LastRun && u.conversation != nil {
+		if c, err := u.core.LoadConversation(u.conversation.ID); err == nil {
+			c.Draft = u.prompt.GetText()
+			u.conversation = &c
+		}
+	}
+	u.state = state
 }
 func (u *UI) refresh() {
+	u.syncState()
 	u.rebuildTree()
 	u.renderDocument()
 	u.renderAssistant()
@@ -261,7 +285,7 @@ func (u *UI) guardBuffer(next func()) {
 	next()
 }
 func (u *UI) writable() bool {
-	if u.busy {
+	if u.state.Busy {
 		u.notice("Cancel work and wait for it to stop before editing.")
 		return false
 	}
@@ -269,11 +293,34 @@ func (u *UI) writable() bool {
 		u.notice("Save or cancel the current text buffer first.")
 		return false
 	}
-	u.editing = true
+	if err := u.core.BeginEditing(); err != nil {
+		u.error(err)
+		return false
+	}
+	u.syncState()
 	return true
 }
 func (u *UI) key(e *tcell.EventKey) *tcell.EventKey {
+	if u.core.Revision() != u.state.Revision {
+		u.refresh()
+	}
+	if !u.state.Busy {
+		if u.quitPending {
+			u.quitPending = false
+			if u.finishQuit() {
+				return nil
+			}
+		}
+		if u.state.LastRun != "" && u.presentedRun != u.state.LastRun {
+			u.presentedRun = u.state.LastRun
+			if run, err := u.core.LoadRun(u.state.LastRun); err == nil && (run.Kind == "outline" || run.Kind == "test") {
+				u.inspectRun(run)
+			}
+		}
+	}
 	switch e.Key() {
+	case tcell.KeyNUL:
+		return nil
 	case tcell.KeyCtrlC:
 		u.quit()
 		return nil
@@ -396,22 +443,11 @@ func (u *UI) cycleFocus() {
 	u.layout()
 	u.app.SetFocus(next)
 }
-func (u *UI) post(fn func()) {
-	if u.closed.Load() {
-		return
-	}
-	u.app.QueueUpdateDraw(func() {
-		if !u.closed.Load() {
-			fn()
-		}
-	})
-}
-
 func (u *UI) quit() {
 	if u.dialog {
 		u.closeDialog()
 	}
-	if u.busy {
+	if u.state.Busy {
 		u.choice("Work is running", "Cancel active work, save its partial history, and quit?", []string{"Cancel and quit", "Stay"}, func(i int) {
 			if i == 0 {
 				u.quitPending = true
@@ -420,25 +456,21 @@ func (u *UI) quit() {
 		})
 		return
 	}
-	u.guardBuffer(func() {
-		if u.conversation != nil {
-			if err := u.store.SaveConversation(*u.conversation); err != nil {
-				u.error(err)
-				return
-			}
+	u.guardBuffer(func() { u.finishQuit() })
+}
+func (u *UI) finishQuit() bool {
+	if u.conversation != nil {
+		if err := u.core.SaveDraft(u.conversation.ID, u.prompt.GetText()); err != nil {
+			u.error(err)
+			return false
 		}
-		u.app.Stop()
-	})
+	}
+	u.app.Stop()
+	return true
 }
 func (u *UI) stopWork() {
-	u.queue = nil
-	if u.queueCancel != nil {
-		u.queueCancel()
-	}
-	if u.cancel != nil {
-		u.cancel()
-	}
-	u.notice("Cancellation requested; waiting for the model call to stop.")
+	u.core.Cancel()
+	u.refresh()
 }
 func (u *UI) externalEditor() {
 	if !u.writable() {
@@ -446,16 +478,10 @@ func (u *UI) externalEditor() {
 	}
 	id := u.currentID()
 	field := u.field()
-	path, err := u.store.Path(id, field)
+	path, err := u.core.PrepareExternalEdit(id, field)
 	if err != nil {
 		u.error(err)
 		return
-	}
-	if _, err = os.Stat(path); os.IsNotExist(err) {
-		if err = project.Atomic(path, nil); err != nil {
-			u.error(err)
-			return
-		}
 	}
 	editor := os.Getenv("VISUAL")
 	if editor == "" {
@@ -483,16 +509,17 @@ func (u *UI) reload() {
 	if !u.writable() {
 		return
 	}
-	if err := u.store.Reload(); err != nil {
+	if err := u.core.Reload(); err != nil {
 		u.error(err)
 		return
 	}
-	if u.store.Config.Nodes[u.selected] == nil {
-		u.selected = u.store.Config.Root
+	u.state = u.core.View()
+	if u.state.Config.Nodes[u.selected] == nil {
+		u.selected = u.state.Config.Root
 	}
-	if u.store.Config.Knowledge[u.knowledge] == nil {
+	if u.state.Config.Knowledge[u.knowledge] == nil {
 		u.knowledge = ""
-		for id := range u.store.Config.Knowledge {
+		for id := range u.state.Config.Knowledge {
 			u.knowledge = id
 			break
 		}
@@ -520,11 +547,11 @@ func (u *UI) edit() {
 		return
 	}
 	id, field := u.currentID(), u.field()
-	if n := u.store.Config.Nodes[id]; n != nil && field == "prose" && len(n.Children) > 0 {
+	if n := u.state.Config.Nodes[id]; n != nil && field == "prose" && len(n.Children) > 0 {
 		u.notice("Select a leaf to edit its prose.")
 		return
 	}
-	text, err := u.store.Read(id, field)
+	text, err := u.core.Read(id, field)
 	if err != nil {
 		u.error(err)
 		return
@@ -543,7 +570,7 @@ func (u *UI) saveEdit() bool {
 	if u.editor == nil {
 		return true
 	}
-	if err := u.store.SaveText(u.editID, u.editField, u.editor.GetText(), u.editOriginal); err != nil {
+	if err := u.core.SaveText(u.editID, u.editField, u.editor.GetText(), u.editOriginal); err != nil {
 		u.error(err)
 		return false
 	}
@@ -554,13 +581,8 @@ func (u *UI) saveEdit() bool {
 	return true
 }
 func (u *UI) export() {
-	path := filepath.Join(u.store.Dir, "exports", "manuscript.md")
-	if err := project.Atomic(path, []byte(u.store.Manuscript())); err != nil {
-		u.error(err)
-		return
-	}
-	manifest := map[string]any{"exported_at": project.Now(), "passages": u.store.State.Passages, "source_fingerprint": u.store.Hashes}
-	if err := project.WriteJSON(filepath.Join(u.store.Dir, "exports", "manifest.json"), manifest); err != nil {
+	path, err := u.core.Export()
+	if err != nil {
 		u.error(err)
 		return
 	}

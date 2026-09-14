@@ -295,15 +295,24 @@ func (c Config) Validate() error {
 				if _, ok := c.Models[m]; !ok {
 					return fmt.Errorf("%s: unknown %s model %s", n.Title, role, m)
 				}
+				if RequiresTools(role) && !c.Models[m].Tools {
+					return fmt.Errorf("%s requires tools", RoleNames[role])
+				}
 			}
 		}
 	}
 	if _, ok := c.Models[c.BaseModel]; !ok {
 		return fmt.Errorf("base model is missing")
 	}
-	for _, m := range c.Defaults {
+	if !c.Models[c.BaseModel].Tools {
+		return fmt.Errorf("the base model must support tools")
+	}
+	for role, m := range c.Defaults {
 		if _, ok := c.Models[m]; !ok && m != "" {
 			return fmt.Errorf("unknown feature model %s", m)
+		}
+		if m != "" && RequiresTools(role) && !c.Models[m].Tools {
+			return fmt.Errorf("%s requires tools", RoleNames[role])
 		}
 	}
 	l := c.Limits
@@ -322,4 +331,9 @@ func ValidID(id string) bool {
 		}
 	}
 	return true
+}
+
+// RequiresTools expresses the capability contract for pipeline assignments.
+func RequiresTools(role string) bool {
+	return role == "knowledge" || role == "outline-context" || role == "consistency"
 }

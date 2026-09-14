@@ -159,6 +159,14 @@ func (s *Store) SaveConversation(c Conversation) error {
 	}
 	return WriteJSON(filepath.Join(s.Dir, ".twriter", "conversations", c.ID+".json"), c)
 }
+func (s *Store) LoadConversation(id string) (Conversation, error) {
+	var c Conversation
+	if !ValidID(id) {
+		return c, fmt.Errorf("invalid conversation")
+	}
+	err := readJSON(filepath.Join(s.Dir, ".twriter", "conversations", id+".json"), &c)
+	return c, err
+}
 func (s *Store) Conversations() ([]Conversation, error) {
 	files, err := os.ReadDir(filepath.Join(s.Dir, ".twriter", "conversations"))
 	if os.IsNotExist(err) {

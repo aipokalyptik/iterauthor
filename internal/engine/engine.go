@@ -85,7 +85,11 @@ func (e Engine) Run(ctx context.Context, s project.Snapshot, target, kind, manua
 		return
 	}
 	if kind == "outline" {
-		text, err := t.ask("outline", "EXPAND OUTLINE. Develop the supplied outline according to the author's direction. Preserve authored requirements. Return only outline text for this one brief; do not invent a universal outline depth.", prepared+"\n\nAUTHOR DIRECTION:\n"+prompt, t.role("outline"), nil)
+		outlineModel := t.role("outline")
+		if manualModel != "" {
+			outlineModel = manualModel
+		}
+		text, err := t.ask("outline", "EXPAND OUTLINE. Develop the supplied outline according to the author's direction. Preserve authored requirements. Return only outline text for this one brief; do not invent a universal outline depth.", prepared+"\n\nAUTHOR DIRECTION:\n"+prompt, outlineModel, nil)
 		t.run.Text = text
 		if err != nil {
 			t.fail(err)
