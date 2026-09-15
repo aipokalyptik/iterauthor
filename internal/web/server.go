@@ -101,7 +101,7 @@ func New(core *application.Service) http.Handler {
 	})
 	files, _ := fs.Sub(assets, "assets")
 	mux.Handle("GET /", http.FileServer(http.FS(files)))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return s.logRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Cache-Control", "no-store")
@@ -122,7 +122,7 @@ func New(core *application.Service) http.Handler {
 			return
 		}
 		mux.ServeHTTP(w, r)
-	})
+	}))
 }
 
 // Listen honors the author's bind address, including specific interfaces and
@@ -171,6 +171,9 @@ func decode(w http.ResponseWriter, r *http.Request, value any) bool {
 func respond(w http.ResponseWriter, value any, err error) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if err != nil {
+		if recorder, ok := w.(interface{ RecordError(error) }); ok {
+			recorder.RecordError(err)
+		}
 		status := http.StatusBadRequest
 		if errors.Is(err, application.ErrBusy) || errors.Is(err, application.ErrStale) || errors.Is(err, application.ErrChanges) {
 			status = http.StatusConflict
@@ -272,6 +275,9 @@ func (s *Server) command(w http.ResponseWriter, r *http.Request) {
 	var value any
 	var err error
 	core := s.core
+	if message := commandActivity(c.Action); message != "" {
+		core.LogActivity(message)
+	}
 	switch c.Action {
 	case "save":
 		err = core.SaveText(c.ID, c.Field, c.Text, c.Expected)

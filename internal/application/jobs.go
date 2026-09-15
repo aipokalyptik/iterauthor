@@ -2,7 +2,9 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/aipokalyptik/iterauthor/internal/engine"
@@ -72,6 +74,7 @@ func (s *Service) generate(sel Selection, force bool) error {
 	}
 	if len(eligible) == 0 {
 		s.progress = "No eligible passages. Regenerate requests replacement candidates."
+		s.log(slog.LevelInfo, "No passages need generation", nil)
 		s.changed()
 		return nil
 	}
@@ -81,6 +84,7 @@ func (s *Service) generate(sel Selection, force bool) error {
 	}
 	s.editing = false
 	s.queue = eligible[1:]
+	s.log(slog.LevelInfo, "Queuing prose generation", nil, "passages", len(eligible))
 	ctx := s.start(Job{Kind: "prose", Target: eligible[0]}, "")
 	go s.work(ctx, snapshot, Job{Kind: "prose", Target: eligible[0]}, "", nil)
 	return nil
@@ -173,13 +177,14 @@ func (s *Service) work(ctx context.Context, snapshot project.Snapshot, job Job, 
 				s.mu.Lock()
 				defer s.mu.Unlock()
 				s.progress = stage
-				s.logWork("Progress", "stage", stage)
+				s.logWork(consoleStage(stage))
 				s.changed()
 			}}
 		// Even cancellation immediately after submission produces a retained run.
 		run := e.Run(ctx, snapshot, job.Target, job.Kind, job.Model, job.Prompt, history)
 		s.mu.Lock()
 		remaining -= run.Calls
+		s.logWork("Saving generation results")
 		var commitErr error
 		if job.Kind == "prose" {
 			commitErr = s.store.OfferRun(run, run.Status == "Available" && ctx.Err() == nil)
@@ -197,7 +202,17 @@ func (s *Service) work(ctx context.Context, snapshot project.Snapshot, job Job, 
 			s.progress += " · saving result: " + commitErr.Error()
 			s.workInfo.Status = "Failed"
 		}
-		s.logWork("Operation finished", "status", s.workInfo.Status, "finish_reason", run.FinishReason, "details", "Inspect the run in Activity for results or errors")
+		if run.Error != "" {
+			level := slog.LevelError
+			if ctx.Err() == context.Canceled {
+				level = slog.LevelInfo
+			}
+			s.logWorkAt(level, "Generation stopped", errors.New(run.Error), "status", s.workInfo.Status)
+		}
+		if commitErr != nil {
+			s.logWorkAt(slog.LevelError, "Could not save generation results", commitErr)
+		}
+		s.logWork("Operation finished", "status", s.workInfo.Status, "finish_reason", consoleFinish(run.FinishReason))
 		s.changed()
 		if job.Kind != "prose" || run.Status == "Canceled" || run.Status == "Failed" || commitErr != nil || ctx.Err() != nil || len(s.queue) == 0 {
 			s.mu.Unlock()
@@ -205,6 +220,7 @@ func (s *Service) work(ctx context.Context, snapshot project.Snapshot, job Job, 
 		}
 		if remaining <= 0 {
 			s.progress = "Queue budget exhausted. Candidates are retained in Activity."
+			s.logWorkAt(slog.LevelError, "Queue stopped", fmt.Errorf("model-call budget exhausted"), "remaining_passages", len(s.queue))
 			s.mu.Unlock()
 			return
 		}
@@ -212,6 +228,7 @@ func (s *Service) work(ctx context.Context, snapshot project.Snapshot, job Job, 
 		snapshot, err = s.snapshot()
 		if err != nil {
 			s.progress = err.Error()
+			s.logWorkAt(slog.LevelError, "Could not prepare the next passage", err)
 			s.mu.Unlock()
 			return
 		}

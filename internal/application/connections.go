@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -194,6 +195,7 @@ func (s *Service) RefreshConnection(ctx context.Context, id string) error {
 	s.catalogs[id] = state
 	if saveErr := project.WriteJSON(filepath.Join(dir, ".twriter", "catalogs.json"), s.catalogs); saveErr != nil {
 		state.Error = "Could not cache model list: " + saveErr.Error()
+		s.log(slog.LevelError, "Could not save the model catalog", saveErr, "connection", id)
 		s.catalogs[id] = state
 	}
 	s.changed()

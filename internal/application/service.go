@@ -109,13 +109,7 @@ func (s *Service) SetLogger(logger *slog.Logger) {
 }
 
 func (s *Service) logWork(message string, attrs ...any) {
-	if s.logger == nil {
-		return
-	}
-	if w := s.workInfo; w != nil {
-		attrs = append(attrs, "kind", w.Kind, "target", w.Target, "conversation", w.Conversation, "run", w.Run, "calls", w.Calls)
-	}
-	s.logger.Info(message, attrs...)
+	s.logWorkAt(slog.LevelInfo, message, nil, attrs...)
 }
 
 // Revision lets a rendering adapter cheaply test whether it needs a new View.

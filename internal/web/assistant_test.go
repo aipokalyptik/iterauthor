@@ -103,7 +103,7 @@ func TestSingleOutlineAssistantShowsProgressFailureAndRetry(t *testing.T) {
 	if v.Work.Status != "Failed" || v.Work.Finished == "" || !strings.Contains(v.Progress, "Project settings") {
 		t.Fatal("completed failure disappeared from status")
 	}
-	if !strings.Contains(logs.String(), "Operation accepted") || !strings.Contains(logs.String(), "Progress") || !strings.Contains(logs.String(), "status=Failed") || !strings.Contains(logs.String(), "finish_reason=length") || strings.Contains(logs.String(), "PRIVATE-REQUEST") {
+	if !strings.Contains(logs.String(), "Operation accepted") || !strings.Contains(logs.String(), "Asking the writing assistant") || !strings.Contains(logs.String(), "status=Failed") || !strings.Contains(logs.String(), "finish_reason=length") || !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "Output limit reached before any visible text") || strings.Contains(logs.String(), "PRIVATE-REQUEST") {
 		t.Fatalf("console feedback missing or leaked the prompt: %s", logs.String())
 	}
 	v.Work.Status = "Tampered"

@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/aipokalyptik/iterauthor/internal/model"
 	"github.com/aipokalyptik/iterauthor/internal/project"
@@ -15,9 +16,17 @@ type modelSetup interface {
 	Probe(context.Context, project.Model) (model.ProbeResult, error)
 }
 
-func (s *Service) DiscoverModels(ctx context.Context, endpoint model.Endpoint) (model.Catalog, error) {
+func (s *Service) DiscoverModels(ctx context.Context, endpoint model.Endpoint) (catalog model.Catalog, err error) {
+	s.LogActivity("Refreshing the model list")
+	defer func() {
+		if err != nil {
+			s.LogError("Model list refresh failed", err)
+		} else {
+			s.LogActivity("Model list refreshed", "models", len(catalog.Models))
+		}
+	}()
 	s.mu.Lock()
-	err := s.available()
+	err = s.available()
 	demo := s.demo
 	s.mu.Unlock()
 	if err != nil {
@@ -42,6 +51,7 @@ func (s *Service) ProbeModel(ctx context.Context, candidate project.Model) (mode
 	}
 	workCtx := s.start(Job{Kind: "connection test"}, "")
 	s.progress = "Testing model connection"
+	s.logWork("Testing model text and tool support")
 	s.changed()
 	s.mu.Unlock()
 	probeCtx, cancel := context.WithCancel(ctx)
@@ -79,9 +89,13 @@ func (s *Service) ProbeModel(ctx context.Context, candidate project.Model) (mode
 	if err != nil {
 		s.progress = "Connection test failed: " + err.Error()
 		s.workInfo.Status = "Failed"
+		s.logWorkAt(slog.LevelError, "Model connection test failed", err)
 	} else {
 		s.progress = result.Detail
 		s.workInfo.Status = "Available"
+		if !result.Tools {
+			s.logWorkAt(slog.LevelError, "Model tool test failed", fmt.Errorf("tool exchange failed"))
+		}
 	}
 	s.logWork("Connection test finished", "status", s.workInfo.Status)
 	s.mu.Unlock()

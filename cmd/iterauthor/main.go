@@ -81,13 +81,15 @@ func run() (err error) {
 		defer cancel()
 		err = errors.Join(err, core.Shutdown(ctx))
 	}()
+	if !*terminal {
+		core.SetLogger(slog.Default())
+	}
 	refreshCtx, stopRefresh := context.WithCancel(context.Background())
 	defer stopRefresh()
 	go core.RunModelRefresh(refreshCtx)
 	if *terminal {
 		return tui.New(core).Run()
 	}
-	core.SetLogger(slog.Default())
 	listener, err := web.Listen(*listen)
 	if err != nil {
 		return err
