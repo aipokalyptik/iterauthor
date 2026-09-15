@@ -40,7 +40,7 @@ func (s *Service) ProbeModel(ctx context.Context, candidate project.Model) (mode
 		s.mu.Unlock()
 		return model.ProbeResult{}, err
 	}
-	workCtx := s.start()
+	workCtx := s.start(Job{Kind: "connection test"}, "")
 	s.progress = "Testing model connection"
 	s.changed()
 	s.mu.Unlock()
@@ -55,6 +55,7 @@ func (s *Service) ProbeModel(ctx context.Context, candidate project.Model) (mode
 		s.cancel = nil
 		s.busy = false
 		s.canceling = false
+		s.workInfo.Finished = project.Now()
 		close(s.done)
 		s.changed()
 	}()
@@ -77,9 +78,12 @@ func (s *Service) ProbeModel(ctx context.Context, candidate project.Model) (mode
 	s.mu.Lock()
 	if err != nil {
 		s.progress = "Connection test failed: " + err.Error()
+		s.workInfo.Status = "Failed"
 	} else {
 		s.progress = result.Detail
+		s.workInfo.Status = "Available"
 	}
+	s.logWork("Connection test finished", "status", s.workInfo.Status)
 	s.mu.Unlock()
 	return result, err
 }

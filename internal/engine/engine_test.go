@@ -33,6 +33,9 @@ func source(t *testing.T) (*project.Store, project.Snapshot) {
 }
 func TestHTTPGenerationToolsAndRevisions(t *testing.T) {
 	s, snapshot := source(t)
+	// Leave references for automatic selection rather than including all of
+	// them as mandatory attachments before the selectors run.
+	snapshot.Config.Nodes["visit"].Attachments = nil
 	var mu sync.Mutex
 	drafts := 0
 	var requests []string
@@ -125,7 +128,7 @@ func TestToolLoopBudgetAndUnknownTool(t *testing.T) {
 		}
 		return model.Response{Message: model.Message{Role: "assistant", ToolCalls: []model.ToolCall{{ID: "bad", Function: model.Function{Name: "shell", Arguments: `{"command":"cat private-notes"}`}}}}}, nil
 	})}
-	r := e.Run(context.Background(), snapshot, "visit", "prose", "", "", nil)
+	r := e.Run(context.Background(), snapshot, "visit", "advice", "base", "Help", nil)
 	if r.Calls != 3 || calls != 3 || !strings.Contains(r.Error, "budget exhausted") {
 		t.Fatalf("unbounded tool loop: %d %d %s", r.Calls, calls, r.Error)
 	}

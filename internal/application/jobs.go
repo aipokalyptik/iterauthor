@@ -82,7 +82,7 @@ func (s *Service) generate(sel Selection, force bool) error {
 	}
 	s.editing = false
 	s.queue = eligible[1:]
-	ctx := s.start()
+	ctx := s.start(Job{Kind: "prose", Target: eligible[0]}, "")
 	go s.work(ctx, snapshot, Job{Kind: "prose", Target: eligible[0]}, "", nil)
 	return nil
 }
@@ -119,16 +119,18 @@ func (s *Service) Start(job Job) error {
 		return err
 	}
 	s.editing = true
-	ctx := s.start()
+	ctx := s.start(job, "")
 	go s.work(ctx, snapshot, job, "", nil)
 	return nil
 }
 
-func (s *Service) start() context.Context {
+func (s *Service) start(job Job, conversation string) context.Context {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.store.Config.Limits.Minutes)*time.Minute)
 	s.cancel, s.done = cancel, make(chan struct{})
 	s.busy, s.canceling = true, false
 	s.progress = "Starting work"
+	s.workInfo = &Work{Kind: job.Kind, Target: job.Target, Conversation: conversation, Started: project.Now(), Status: "Running"}
+	s.logWork("Operation accepted")
 	s.changed()
 	return ctx
 }
@@ -144,6 +146,7 @@ func (s *Service) work(ctx context.Context, snapshot project.Snapshot, job Job, 
 		s.cancel = nil
 		s.busy, s.canceling = false, false
 		s.queue = nil
+		s.workInfo.Finished = project.Now()
 		s.changed()
 		close(s.done)
 	}()
@@ -151,11 +154,26 @@ func (s *Service) work(ctx context.Context, snapshot project.Snapshot, job Job, 
 		s.mu.Lock()
 		snapshot.Config.Limits.Calls = remaining
 		s.progress = "Starting " + job.Kind + " for " + snapshot.Config.TitleOf(job.Target)
+		s.workInfo.Target = job.Target
+		s.workInfo.Status = "Running"
+		s.workInfo.Run, s.workInfo.Calls = "", 0
 		s.changed()
 		s.mu.Unlock()
 		e := engine.Engine{Client: s.client, Demo: s.demo,
-			Save:     func(r project.Run) error { s.mu.Lock(); defer s.mu.Unlock(); return s.store.SaveRun(r) },
-			Progress: func(stage string) { s.mu.Lock(); defer s.mu.Unlock(); s.progress = stage; s.changed() }}
+			Save: func(r project.Run) error {
+				s.mu.Lock()
+				defer s.mu.Unlock()
+				s.workInfo.Run, s.workInfo.Calls = r.ID, r.Calls
+				s.changed()
+				return s.store.SaveRun(r)
+			},
+			Progress: func(stage string) {
+				s.mu.Lock()
+				defer s.mu.Unlock()
+				s.progress = stage
+				s.logWork("Progress", "stage", stage)
+				s.changed()
+			}}
 		// Even cancellation immediately after submission produces a retained run.
 		run := e.Run(ctx, snapshot, job.Target, job.Kind, job.Model, job.Prompt, history)
 		s.mu.Lock()
@@ -168,13 +186,16 @@ func (s *Service) work(ctx context.Context, snapshot project.Snapshot, job Job, 
 			commitErr = s.completeConversation(conversationID, run)
 		}
 		s.lastRun = run.ID
+		s.workInfo.Status = run.Status
 		s.progress = run.Kind + ": " + run.Status
 		if run.Error != "" {
 			s.progress += " · " + run.Error
 		}
 		if commitErr != nil {
 			s.progress += " · saving result: " + commitErr.Error()
+			s.workInfo.Status = "Failed"
 		}
+		s.logWork("Operation finished", "status", s.workInfo.Status, "finish_reason", run.FinishReason, "details", "Inspect the run in Activity for results or errors")
 		s.changed()
 		if job.Kind != "prose" || run.Status == "Canceled" || run.Status == "Failed" || commitErr != nil || ctx.Err() != nil || len(s.queue) == 0 {
 			s.mu.Unlock()
@@ -225,7 +246,7 @@ func (s *Service) Send(id, prompt string) error {
 		return err
 	}
 	s.editing = true
-	ctx := s.start()
+	ctx := s.start(Job{Kind: c.Mode, Target: c.Target, Model: c.Model}, c.ID)
 	go s.work(ctx, snapshot, Job{Kind: c.Mode, Target: c.Target, Model: c.Model, Prompt: prompt}, c.ID, history)
 	return nil
 }
@@ -242,6 +263,9 @@ func (s *Service) completeConversation(id string, run project.Run) error {
 	if len(run.Edits) > 0 {
 		reply += fmt.Sprintf("\n%d edit proposal(s) retained. Open this run in Activity to apply them.", len(run.Edits))
 	}
-	c.Turns = append(c.Turns, project.Turn{Role: "assistant", Text: reply, Run: run.ID})
+	if strings.TrimSpace(reply) == "" {
+		reply = "The model returned no visible reply. Inspect this run for details, then retry or choose another model."
+	}
+	c.Turns = append(c.Turns, project.Turn{Role: "assistant", Text: strings.TrimSpace(reply), Run: run.ID, Status: run.Status, Proposals: len(run.Edits)})
 	return s.store.SaveConversation(c)
 }

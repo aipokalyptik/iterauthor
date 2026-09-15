@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/aipokalyptik/iterauthor/internal/model"
@@ -33,6 +34,20 @@ type View struct {
 	Queue                                   []string
 	Progress                                string
 	LastRun                                 string
+	Work                                    *Work
+}
+
+// Work identifies the current or most recent operation independently of a UI.
+// Progress remains readable after completion, including fast failures.
+type Work struct {
+	Kind         string `json:"kind"`
+	Target       string `json:"target"`
+	Conversation string `json:"conversation,omitempty"`
+	Started      string `json:"started"`
+	Finished     string `json:"finished,omitempty"`
+	Run          string `json:"run,omitempty"`
+	Status       string `json:"status"`
+	Calls        int    `json:"calls"`
 }
 
 type Service struct {
@@ -47,6 +62,8 @@ type Service struct {
 	progress, lastRun                         string
 	revision                                  uint64
 	subscribers                               map[chan struct{}]struct{}
+	workInfo                                  *Work
+	logger                                    *slog.Logger
 }
 
 // New transfers exclusive ownership of store to the service. The composition
@@ -67,10 +84,33 @@ func (s *Service) View() View {
 	var state project.State
 	b, _ := json.Marshal(s.store.State)
 	_ = json.Unmarshal(b, &state)
+	var work *Work
+	if s.workInfo != nil {
+		copy := *s.workInfo
+		work = &copy
+	}
 	return View{Revision: s.revision, ConfigVersion: configVersion(s.store.Config),
 		Dir: s.store.Dir, Config: s.store.Config.Clone(), State: state,
 		Editing: s.editing, Busy: s.busy, Canceling: s.canceling, Closing: s.closing,
-		Demo: s.demo, Queue: append([]string(nil), s.queue...), Progress: s.progress, LastRun: s.lastRun}
+		Demo: s.demo, Queue: append([]string(nil), s.queue...), Progress: s.progress, LastRun: s.lastRun, Work: work}
+}
+
+// SetLogger enables operational console feedback for hosts that have a console.
+// It logs lifecycle metadata, not prompts, sources, credentials or model replies.
+func (s *Service) SetLogger(logger *slog.Logger) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.logger = logger
+}
+
+func (s *Service) logWork(message string, attrs ...any) {
+	if s.logger == nil {
+		return
+	}
+	if w := s.workInfo; w != nil {
+		attrs = append(attrs, "kind", w.Kind, "target", w.Target, "conversation", w.Conversation, "run", w.Run, "calls", w.Calls)
+	}
+	s.logger.Info(message, attrs...)
 }
 
 // Revision lets a rendering adapter cheaply test whether it needs a new View.
@@ -170,6 +210,7 @@ func (s *Service) Cancel() {
 	s.canceling = true
 	s.cancel()
 	s.progress = "Cancellation requested; waiting for the model call to stop."
+	s.logWork("Cancellation requested")
 	s.changed()
 }
 
@@ -226,6 +267,7 @@ func (s *Service) SwitchProject(dir, title string, create bool) error {
 		s.store.Close()
 		s.store = next
 		s.lastRun, s.progress = "", ""
+		s.workInfo = nil
 		return nil
 	})
 }

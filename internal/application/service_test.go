@@ -233,6 +233,23 @@ func TestConversationCompletionPreservesDraftAndScopeWithoutUI(t *testing.T) {
 	}
 }
 
+func TestOlderConversationRecoversItsFailureStatus(t *testing.T) {
+	p, err := project.Create(filepath.Join(t.TempDir(), "story"), "Test", false)
+	check(t, err)
+	run := project.Run{ID: project.NewID(), Kind: "advice", Target: "story", Status: "Failed", Error: "Output limit reached"}
+	check(t, p.SaveRun(run))
+	c := project.Conversation{ID: project.NewID(), Target: "story", Mode: "advice", Model: "base",
+		Turns: []project.Turn{{Role: "author", Text: "Help with my outline"}, {Role: "assistant", Text: run.Error, Run: run.ID}}}
+	check(t, p.SaveConversation(c))
+	s := application.New(p, model.Demo{}, true)
+	defer func() { check(t, s.Shutdown(context.Background())) }()
+	loaded, err := s.LoadConversation(c.ID)
+	check(t, err)
+	if loaded.Turns[1].Status != "Failed" || loaded.Turns[0].Text != c.Turns[0].Text {
+		t.Fatal("older failure cannot be displayed/retried without changing the discussion")
+	}
+}
+
 func TestSnapshotsAndStaleEditorsCannotMutateCoreState(t *testing.T) {
 	s := fixture(t, model.Demo{})
 	check(t, s.Generate(application.Selection{Scope: "branch", Target: "visit"}, false))

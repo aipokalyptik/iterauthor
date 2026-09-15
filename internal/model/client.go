@@ -153,6 +153,9 @@ func (h *HTTP) Complete(ctx context.Context, m project.Model, messages []Message
 		}
 	}
 	if c.Finish == "length" {
+		if strings.TrimSpace(content) == "" {
+			return Response{Message: Message{Role: "assistant"}, Tokens: envelope.Usage.Tokens, Finish: c.Finish}, fmt.Errorf("model reached its output-token limit before returning any visible text; increase Output tokens in Project settings or choose a different model, then retry")
+		}
 		return Response{Message: Message{Role: "assistant", Content: content}, Tokens: envelope.Usage.Tokens, Finish: c.Finish}, fmt.Errorf("model output reached its token limit; partial output retained; increase output_tokens or narrow the task")
 	}
 	if content == "" && len(c.Message.ToolCalls) == 0 {

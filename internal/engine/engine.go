@@ -162,28 +162,34 @@ func (t *task) checkpoint(stage string) error {
 	if err := t.ctx.Err(); err != nil {
 		return err
 	}
+	if t.engine.Save != nil {
+		if err := t.engine.Save(t.run); err != nil {
+			return err
+		}
+	}
 	if t.engine.Progress != nil {
 		t.engine.Progress(stage)
-	}
-	if t.engine.Save != nil {
-		return t.engine.Save(t.run)
 	}
 	return nil
 }
 func (t *task) prepare() (string, error) {
 	s := t.snapshot
+	included := map[string]bool{}
 	var b strings.Builder
 	fmt.Fprintf(&b, "TARGET: %s [%s]\n", s.Config.TitleOf(t.run.Target), t.run.Target)
 	for _, id := range s.Config.Ancestors(t.run.Target) {
+		included[id] = true
 		src := s.Sources[id]
 		fmt.Fprintf(&b, "\nOUTLINE %s [%s]:\n%s\n", src.Title, id, src.Text)
 	}
 	if s.Config.Knowledge[t.run.Target] != nil {
+		included[t.run.Target] = true
 		src := s.Sources[t.run.Target]
 		fmt.Fprintf(&b, "\nKNOWLEDGE %s [%s]:\n%s\n", src.Title, src.ID, src.Text)
 	}
 	fmt.Fprintf(&b, "\nEFFECTIVE PROSE STYLE:\n%s\n", s.Style(t.run.Target))
 	for _, id := range s.Config.Required(t.run.Target) {
+		included[id] = true
 		src := s.Sources[id]
 		fmt.Fprintf(&b, "\nREQUIRED REFERENCE %s [%s] (%s):\n%s\n", src.Title, id, src.Kind, src.Text)
 		if prose := s.Prose[id]; prose != "" {
@@ -205,13 +211,22 @@ func (t *task) prepare() (string, error) {
 		}
 		var catalog []string
 		for id, src := range s.Sources {
-			if src.Kind == kind {
-				catalog = append(catalog, src.Title+" ["+id+"]")
+			if src.Kind == kind && !included[id] {
+				entry, _ := json.Marshal(map[string]string{"id": id, "title": src.Title})
+				catalog = append(catalog, string(entry))
 			}
+		}
+		if len(catalog) == 0 {
+			reason := "No additional " + kind + " entries to select; existing references are already included."
+			t.run.Trace = append(t.run.Trace, project.Trace{Stage: role, Response: reason})
+			if err := t.checkpoint(reason); err != nil {
+				return "", err
+			}
+			continue
 		}
 		sort.Strings(catalog)
 		user := base + "\nAVAILABLE " + strings.ToUpper(kind) + " ENTRIES (search can find more detail):\n" + strings.Join(catalog, "\n")
-		selected, err := t.ask(role, "SELECT CONTEXT. Find "+kind+" entries relevant to the target. Use read/search tools to inspect source text. Return a concise factual summary with source IDs. Do not invent facts. Omit irrelevant sources. Private notes are unavailable.", user, t.role(role), readTools())
+		selected, err := t.ask(role, "SELECT CONTEXT. Find additional "+kind+" entries relevant to the target. Required sources are already provided; select additional context only. Use exact id values from the catalog when calling read_entry, never a title or title-plus-ID label. Use read/search tools to inspect source text. Return a concise factual summary with source IDs. Do not invent facts. Omit irrelevant sources. Private notes are unavailable.", user, t.role(role), readTools())
 		if err != nil {
 			return "", err
 		}
@@ -338,6 +353,7 @@ func (t *task) ask(stage, system, user, modelID string, tools []model.Tool) (str
 			return "", err
 		}
 		response, err := t.engine.Client.Complete(t.ctx, m, messages, tools, t.snapshot.Config.Limits.OutputTokens)
+		t.run.FinishReason = response.Finish
 		t.run.Trace = append(t.run.Trace, project.Trace{Stage: stage, Model: modelID, Request: append([]model.Message(nil), messages...), Response: response})
 		t.run.Tokens += response.Tokens
 		if err != nil {
@@ -369,6 +385,9 @@ func (t *task) ask(stage, system, user, modelID string, tools []model.Tool) (str
 			}
 			t.run.Trace = append(t.run.Trace, project.Trace{Stage: stage, Model: modelID, Tool: call.Function.Name, Request: call.Function.Arguments, Response: result})
 			messages = append(messages, model.Message{Role: "tool", ToolCallID: call.ID, Content: result})
+			if err := t.checkpoint(stage + " · tool " + call.Function.Name); err != nil {
+				return "", err
+			}
 		}
 	}
 }
@@ -414,7 +433,7 @@ func (t *task) tool(name, args string) string {
 			ids = append(ids, id)
 		}
 		sort.Strings(ids)
-		var results []project.Source
+		results := []project.Source{}
 		for _, id := range ids {
 			src := s.Sources[id]
 			if a.Kind != "all" && a.Kind != "" && src.Kind != a.Kind {

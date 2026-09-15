@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
@@ -83,6 +84,7 @@ func run() (err error) {
 	if *terminal {
 		return tui.New(core).Run()
 	}
+	core.SetLogger(slog.Default())
 	listener, err := web.Listen(*listen)
 	if err != nil {
 		return err

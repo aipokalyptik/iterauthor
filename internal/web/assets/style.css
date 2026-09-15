@@ -467,6 +467,7 @@ code {
   background: #eaf0e7;
   border-color: #d5e1d1;
 }
+#work-status > .actions { flex-shrink: 0; }
 #work-status button,
 #change-banner button {
   padding: 5px 9px;
@@ -756,7 +757,24 @@ code {
   font-size: 11px;
   padding: 6px 9px;
 }
+#assistant-status {
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px;
+  margin-bottom: 12px;
+  background: #edf2e8;
+  border-radius: 6px;
+}
+#work-status.work-failed {
+  background: #fff0eb;
+  color: #8a3428;
+}
+#assistant-status.error-box {
+  background: #fff0eb;
+  color: #8a3428;
+}
 .turns {
+  position: relative;
   flex: 1;
   min-height: 130px;
   overflow: auto;
@@ -791,6 +809,7 @@ code {
   min-height: 100px;
   font-size: 13px;
 }
+.chat-compose { flex-shrink: 0; }
 .chat-compose .actions {
   justify-content: space-between;
   margin-top: 8px;

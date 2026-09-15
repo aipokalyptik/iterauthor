@@ -42,6 +42,8 @@ Text saves with **⌘S / Ctrl+S**; assistant messages send with **⌘Enter / Ctr
 
 Unsaved text is guarded when navigating. One operation runs at a time; source editing unlocks after completion or cancellation. Closing a browser tab leaves work running in the server.
 
+The assistant shows submission feedback, the current model/tool stage, and elapsed time. Completed failures stay visible, with inspection and retry controls. If a model exhausts its output limit before producing text, increase **Output tokens** in **Project settings** or choose another model, then retry. Discussion sessions reply in the conversation; source-edit sessions stage changes for review and application. The HTTP server prints operation stages and outcomes to its console without printing prompts or story text.
+
 ## Build and verify
 
 Source builds require Go 1.24 or newer. Packaged binaries do not require Go.

@@ -36,6 +36,8 @@ Multi-file operations retain recovery history and commit structural metadata las
 
 Each leaf is one generation unit and can describe several scenes or a detailed internal outline. Ancestor outlines, effective style, and mandatory attachments are included. Automatic wiki/outline selectors can read/search source entries and supply summaries; both inherit independently and default on. Manual attachments remain mandatory with automatic selection off.
 
+Selection checks for additional entries first. If a category is empty, or all of its entries are already included as the target, ancestors, or required references, no model call is spent selecting that category. The skipped call is explained in the run trace. A single-outline project with an empty wiki therefore goes directly to the requested operation. Additional-source catalogs use explicit IDs and titles, and empty searches return an empty array.
+
 All ancestor outline text is included conservatively. There is no separate pruning model for ancestor paragraphs. Excessive required context produces a budget error rather than silently dropping requirements.
 
 The writer produces a candidate, consistency reviews it using source tools, and style reviews it. Blocking findings go back to the writer. Each revision starts review again. Invalid/contradictory verdicts, missing explanations, truncation, timeouts, and exhausted budgets stop automatic acceptance. Preserved candidates can be explicitly chosen with findings.
@@ -55,6 +57,8 @@ With prose present, edits to outlines, wiki facts, style, context attachments/se
 One active operation locks source editing globally. Cancel clears the remaining queue and waits for the active call. Then edit and explicitly generate again. Subtree locks, cancel-on-edit for queued branches, and automatic re-queueing are not implemented.
 
 Conversations retain target, mode, model, turns, and draft. Browsing does not retarget them. Later turns receive current sources plus saved discussion. Interactive research and source editing require a tool-capable model; text-only models remain usable for prose, outline generation, and style review. Demo editing supplies a synthetic replacement. Apply makes it authored source and refreshes views. Stale proposals are rejected when fingerprints differ, and the entire set of proposals is validated for scope and permitted fields before writes start.
+
+The browser acknowledges Send immediately, shows the active model/tool stage and elapsed time in the assistant panel, and retains completed failures in the conversation and workspace status. Failed or canceled replies can be retried explicitly; no automatic retry spends more calls. Older conversation turns obtain their result status from saved runs. A three-second state poll while busy or disconnected supplements SSE updates. The HTTP executable logs accepted operations, stages, tool names, and outcomes with conversation/run IDs, without logging prompts, sources, credentials, or reply bodies. Full errors and exact call records remain in Activity. TUI mode does not emit these console logs.
 
 Private notes are excluded from worker snapshots. Models have no arbitrary filesystem, shell, web-research, or history-read tools. The exposed tools are `read_entry`, `search_entries`, and scoped `propose_edit`. Diagnosis cannot yet query older run records through a tool; authors can inspect and quote that evidence.
 

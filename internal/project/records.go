@@ -31,22 +31,23 @@ type Edit struct {
 	Text  string `json:"text"`
 }
 type Run struct {
-	ID          string      `json:"id"`
-	Target      string      `json:"target"`
-	Kind        string      `json:"kind"`
-	Status      string      `json:"status"`
-	Started     string      `json:"started"`
-	Finished    string      `json:"finished,omitempty"`
-	Fingerprint string      `json:"fingerprint"`
-	Context     string      `json:"context,omitempty"`
-	Candidates  []Candidate `json:"candidates,omitempty"`
-	Text        string      `json:"text,omitempty"`
-	Error       string      `json:"error,omitempty"`
-	Calls       int         `json:"calls"`
-	Tokens      int         `json:"reported_tokens"`
-	Trace       []Trace     `json:"trace,omitempty"`
-	Edits       []Edit      `json:"edits,omitempty"`
-	Demo        bool        `json:"demo"`
+	ID           string      `json:"id"`
+	Target       string      `json:"target"`
+	Kind         string      `json:"kind"`
+	Status       string      `json:"status"`
+	Started      string      `json:"started"`
+	Finished     string      `json:"finished,omitempty"`
+	Fingerprint  string      `json:"fingerprint"`
+	Context      string      `json:"context,omitempty"`
+	Candidates   []Candidate `json:"candidates,omitempty"`
+	Text         string      `json:"text,omitempty"`
+	Error        string      `json:"error,omitempty"`
+	FinishReason string      `json:"finish_reason,omitempty"`
+	Calls        int         `json:"calls"`
+	Tokens       int         `json:"reported_tokens"`
+	Trace        []Trace     `json:"trace,omitempty"`
+	Edits        []Edit      `json:"edits,omitempty"`
+	Demo         bool        `json:"demo"`
 }
 
 func (s *Store) SaveRun(r Run) error {
@@ -140,9 +141,11 @@ func (s *Store) UseCandidate(r Run, index int, explicit bool) error {
 }
 
 type Turn struct {
-	Role string `json:"role"`
-	Text string `json:"text"`
-	Run  string `json:"run,omitempty"`
+	Role      string `json:"role"`
+	Text      string `json:"text"`
+	Run       string `json:"run,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Proposals int    `json:"proposals,omitempty"`
 }
 type Conversation struct {
 	ID     string `json:"id"`

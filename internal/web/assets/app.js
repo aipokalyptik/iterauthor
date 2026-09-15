@@ -39,6 +39,10 @@ const ui = {
   sending: false,
   savedDraft: "",
   conversationLoad: 0,
+  sendError: "",
+  sendingSince: "",
+  connectionLost: false,
+  dismissedWork: "",
 };
 let noticeTimer, draftTimer;
 let pendingDraft = Promise.resolve();
@@ -282,9 +286,8 @@ function renderShell() {
     $("#mode").after(finish);
   }
   finish.hidden = !c.generate_after_editing || !v.editing;
-  $("#work-status").hidden = !v.busy;
-  $("#work-status").innerHTML =
-    `<span>${esc(v.canceling ? "Stopping after the current call…" : v.progress || "Working…")}${v.queue?.length ? ` · ${v.queue.length} queued` : ""}</span><button data-action="cancel" ${v.canceling ? "disabled" : ""}>Stop generation</button>`;
+  renderWorkStatus();
+  renderAssistantStatus();
   const changes = v.state.changes || [];
   $("#change-banner").hidden = !changes.length;
   $("#change-banner").innerHTML =
@@ -309,6 +312,41 @@ function renderShell() {
   } else $("#tree-heading").textContent = "";
   $("#tree").innerHTML = tree;
   $$("[data-write]").forEach((b) => (b.disabled = v.busy));
+}
+
+function elapsed(started) {
+  const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(started)) / 1000));
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+function renderWorkStatus() {
+  const v = ui.view, w = v?.work, box = $("#work-status");
+  if (!v) return;
+  box.hidden = !v.busy && (!w || ui.dismissedWork === w.started);
+  if (box.hidden) return;
+  box.classList.toggle("work-failed", !v.busy && ["Failed", "Needs review", "Canceled"].includes(w?.status));
+  box.innerHTML = `<span>${esc(v.canceling ? "Stopping the current operation…" : v.progress || "Working…")}${v.busy && w?.started ? ` · <span data-elapsed="${esc(w.started)}">${elapsed(w.started)}</span> elapsed` : ""}${v.queue?.length ? ` · ${v.queue.length} queued` : ""}</span><div class="actions">${v.busy ? `<button data-action="cancel" ${v.canceling ? "disabled" : ""}>Stop operation</button>` : `${w?.run ? `<button data-run="${esc(w.run)}">Inspect result</button>` : ""}${w?.conversation === ui.conversation?.id && ["Failed", "Canceled"].includes(w?.status) ? '<button data-action="retry-message">Retry message</button>' : ""}<button data-action="dismiss-work">Dismiss</button>`}</div>`;
+}
+function renderAssistantStatus() {
+  const box = $("#assistant-status");
+  if (!box || !ui.view) return;
+  const w = ui.view.work;
+  const active = ui.view.busy && w?.conversation === ui.conversation?.id;
+  const last = ui.conversation?.turns?.at(-1);
+  const interrupted = last?.role === "author" && !active && !ui.sending && !ui.connectionLost;
+  box.hidden = !ui.sending && !active && !ui.sendError && !ui.connectionLost && !interrupted;
+  box.classList.toggle("error-box", Boolean(ui.sendError) || interrupted);
+  box.textContent = ui.sendError || (ui.sending
+    ? `Sending message… ${elapsed(ui.sendingSince)} elapsed`
+    : ui.connectionLost
+      ? "Connection interrupted. Reconnecting and checking the operation status…"
+      : active
+        ? `${ui.view.canceling ? "Stopping…" : ui.view.progress || "Working…"} · ${elapsed(w.started)} elapsed`
+        : interrupted ? "No completed reply is recorded. Check Activity for an interrupted run before retrying." : "");
+  const send = $("#chat-form button[type=submit]");
+  if (send) {
+    send.disabled = ui.view.busy || ui.sending;
+    send.textContent = ui.sending ? "Sending…" : active ? "Working…" : "Send";
+  }
 }
 
 async function renderMain() {
@@ -1116,7 +1154,7 @@ function renderAssistant() {
   box.hidden = !ui.assistant;
   if (!ui.assistant) return;
   const c = ui.conversation;
-  box.innerHTML = `<div class="assistant-head"><h3>Writing assistant</h3><button data-action="assistant" aria-label="Close writing assistant">×</button></div>${c ? `<div class="assistant-scope">${esc(c.mode === "edit" ? "Propose source edits" : "Advice and research")}<br><strong>${esc(title(c.target))}</strong><br>${esc(ui.view.config.models[c.model]?.name || c.model)}<br>Browsing elsewhere does not change this scope.</div>` : '<p class="muted small">Discuss an outline, develop an idea, or ask for help diagnosing a passage.</p>'}<div class="assistant-toolbar"><button data-action="discuss" data-write>New conversation</button><button data-action="sessions">Saved conversations</button>${c ? '<button data-action="chat-model" data-write>Model</button>' : ""}</div><div class="turns" id="chat-turns">${c ? (c.turns || []).map((turn) => `<div class="turn ${turn.role === "author" ? "author" : ""}"><strong>${turn.role === "author" ? "You" : "Assistant"}</strong>${esc(turn.text)}${turn.run ? `<button data-run="${esc(turn.run)}">Inspect result / proposals</button>` : ""}</div>`).join("") : '<div class="empty small">Start a conversation with the outline or entry you are viewing.</div>'}</div>${c ? `<form class="chat-compose" id="chat-form"><label for="chat-input" class="small">Message</label><textarea id="chat-input" rows="4" placeholder="What would you like to work on?">${esc(ui.draft)}</textarea><div class="actions"><small>Ctrl+Enter / ⌘Enter sends</small><button type="submit" class="primary" ${ui.view.busy ? "disabled" : ""}>Send</button></div></form>` : ""}`;
+  box.innerHTML = `<div class="assistant-head"><h3>Writing assistant</h3><button data-action="assistant" aria-label="Close writing assistant">×</button></div>${c ? `<div class="assistant-scope">${esc(c.mode === "edit" ? "Source edits" : "Discussion")} · <strong>${esc(title(c.target))}</strong><br>${esc(ui.view.config.models[c.model]?.name || c.model)}<br>${c.mode === "edit" ? "Changes are proposed for you to review and apply." : "Replies appear here; sources stay unchanged."}</div>` : '<p class="muted small">Discuss an outline, develop an idea, or ask for help diagnosing a passage.</p>'}<div class="assistant-toolbar"><button data-action="discuss" data-write>New conversation</button><button data-action="sessions">Saved conversations</button>${c ? '<button data-action="chat-model" data-write>Model</button>' : ""}</div><div class="turns" id="chat-turns">${c ? (c.turns || []).map((turn) => `<div class="turn ${turn.role === "author" ? "author" : ""}"><strong>${turn.role === "author" ? "You" : "Assistant"}</strong>${turn.status && turn.status !== "Available" ? badge(turn.status) : ""}${esc(turn.text)}${turn.run ? `<button data-run="${esc(turn.run)}">${turn.proposals ? "Review proposed edits" : "Inspect result"}</button>` : ""}${turn === c.turns.at(-1) && ["Failed", "Canceled"].includes(turn.status) ? '<button data-action="retry-message">Retry message</button><button data-nav="settings">Project settings</button>' : ""}</div>`).join("") : '<div class="empty small">Start a conversation with the outline or entry you are viewing.</div>'}</div><div id="assistant-status" role="status" aria-live="polite" hidden></div>${c ? `<form class="chat-compose" id="chat-form"><label for="chat-input" class="small">Message</label><textarea id="chat-input" rows="4" placeholder="What would you like to work on?">${esc(ui.draft)}</textarea><div class="actions"><small>Ctrl+Enter / ⌘Enter sends</small><button type="submit" class="primary" ${ui.view.busy ? "disabled" : ""}>Send</button></div></form>` : ""}`;
   if (c) {
     const input = $("#chat-input");
     input.oninput = () => {
@@ -1128,24 +1166,7 @@ function renderAssistant() {
     };
     $("#chat-form").onsubmit = async (e) => {
       e.preventDefault();
-      if (!requireSaved() || ui.view.busy || ui.sending) return;
-      const text = input.value.trim();
-      if (!text) return;
-      clearTimeout(draftTimer);
-      ui.sending = true;
-      input.disabled = true;
-      try {
-        await pendingDraft;
-        ui.draft = "";
-        await command("send", { id: c.id, text });
-        if (ui.conversation?.id === c.id) await loadConversation(c.id);
-      } catch (err) {
-        ui.draft = text;
-        report(err);
-      } finally {
-        ui.sending = false;
-        renderAssistant();
-      }
+      await sendAssistant(c.id, input.value);
     };
     input.onkeydown = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
@@ -1157,18 +1178,58 @@ function renderAssistant() {
     $$("[data-write]", box).forEach(
       (b) => (b.disabled = ui.view.busy || ui.sending),
     );
-    $("#chat-turns").scrollTop = $("#chat-turns").scrollHeight;
+    const turns = $("#chat-turns");
+    if (turns.lastElementChild) turns.scrollTop = turns.lastElementChild.offsetTop;
     if (focused) {
       input.focus();
       input.setSelectionRange(...selection);
     }
+  }
+  renderAssistantStatus();
+}
+async function sendAssistant(id, message) {
+  if (ui.sending) return;
+  const text = message.trim();
+  const followUp = ui.draft.trim() === text ? "" : ui.draft;
+  ui.sendError = "";
+  if (!requireSaved()) ui.sendError = "Save or discard your source changes before sending.";
+  else if (ui.view.busy) ui.sendError = "Wait for the current operation to finish, or stop it first.";
+  else if (!text) ui.sendError = "Enter a message first.";
+  if (ui.sendError) {
+    renderAssistantStatus();
+    return;
+  }
+  clearTimeout(draftTimer);
+  ui.sending = true;
+  ui.sendingSince = new Date().toISOString();
+  renderAssistant();
+  try {
+    await pendingDraft;
+    await api("/api/command", { action: "send", id, text });
+    if (ui.conversation?.id === id) {
+      ui.draft = followUp;
+      ui.savedDraft = "";
+      if (followUp) await queueDraft(id, followUp);
+      await loadConversation(id);
+    }
+    await refresh();
+  } catch (err) {
+    if (ui.conversation?.id === id) ui.draft = followUp || text;
+    ui.sendError = `Could not send or confirm the message: ${err.message}. Check the conversation before retrying.`;
+    report(err);
+  } finally {
+    ui.sending = false;
+    renderAssistant();
   }
 }
 async function loadConversation(id) {
   const seq = ++ui.conversationLoad;
   const c = await api(`/api/conversations/${id}`);
   if (seq !== ui.conversationLoad) return;
-  if (ui.conversation?.id !== id) ui.draft = c.draft || "";
+  if (ui.conversation?.id !== id) {
+    ui.draft = c.draft || "";
+    ui.sendError = "";
+  }
   ui.conversation = c;
   ui.savedDraft = c.draft || "";
   renderAssistant();
@@ -1213,6 +1274,7 @@ function newConversation() {
     ui.conversationLoad++;
     ui.savedDraft = "";
     ui.draft = "";
+    ui.sendError = "";
     ui.assistant = true;
     renderAssistant();
   });
@@ -1342,6 +1404,17 @@ document.addEventListener("click", async (event) => {
       return;
     }
     switch (b.dataset.action) {
+      case "dismiss-work":
+        ui.dismissedWork = ui.view.work?.started || "";
+        renderWorkStatus();
+        break;
+      case "retry-message": {
+        const c = ui.conversation;
+        const prompt = [...(c?.turns || [])].reverse().find((turn) => turn.role === "author");
+        if (prompt) await sendAssistant(c.id, prompt.text);
+        break;
+      }
+
       case "save":
         await saveDocument();
         break;
@@ -1497,9 +1570,22 @@ window.addEventListener("beforeunload", (e) => {
   await refresh();
   const stream = new EventSource("/api/events");
   stream.addEventListener("change", () => refresh());
-  stream.onopen = () =>
-    ($("#connection-state").textContent = "Connected to your project");
-  stream.onerror = () =>
-    ($("#connection-state").textContent =
-      "Reconnecting… unsaved text stays here");
+  stream.onopen = () => {
+    ui.connectionLost = false;
+    $("#connection-state").textContent = "Connected to your project";
+    refresh().then(() => ui.conversation && loadConversation(ui.conversation.id)).catch(report);
+  };
+  stream.onerror = () => {
+    ui.connectionLost = true;
+    $("#connection-state").textContent = "Reconnecting… unsaved text stays here";
+    renderAssistantStatus();
+  };
+  setInterval(() => {
+    $$("[data-elapsed]").forEach((el) => (el.textContent = elapsed(el.dataset.elapsed)));
+    renderAssistantStatus();
+  }, 1000);
+  // Poll while working or disconnected so delayed/buffered SSE cannot hide a result.
+  setInterval(() => {
+    if (ui.view?.busy || ui.sending || ui.connectionLost) refresh();
+  }, 3000);
 })().catch(report);

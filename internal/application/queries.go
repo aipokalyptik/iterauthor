@@ -27,7 +27,23 @@ func (s *Service) Conversations() ([]project.Conversation, error) {
 	return read(s, func(p *project.Store) ([]project.Conversation, error) { return p.Conversations() })
 }
 func (s *Service) LoadConversation(id string) (project.Conversation, error) {
-	return read(s, func(p *project.Store) (project.Conversation, error) { return p.LoadConversation(id) })
+	return read(s, func(p *project.Store) (project.Conversation, error) {
+		c, err := p.LoadConversation(id)
+		if err != nil {
+			return c, err
+		}
+		// Older conversations retained the run ID but no result status. Recover
+		// the display metadata without rewriting the author's saved discussion.
+		for i := range c.Turns {
+			turn := &c.Turns[i]
+			if turn.Run != "" && turn.Status == "" {
+				if run, err := p.LoadRun(turn.Run); err == nil {
+					turn.Status, turn.Proposals = run.Status, len(run.Edits)
+				}
+			}
+		}
+		return c, nil
+	})
 }
 func (s *Service) Status(id string) string {
 	s.mu.Lock()

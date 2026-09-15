@@ -178,7 +178,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	for _, id := range v.Config.Leaves(v.Config.Root) {
 		statuses[id] = s.core.Status(id)
 	}
-	respond(w, map[string]any{"revision": v.Revision, "configVersion": v.ConfigVersion, "directory": v.Dir, "config": v.Config, "state": v.State, "editing": v.Editing, "busy": v.Busy, "canceling": v.Canceling, "demo": v.Demo, "queue": v.Queue, "progress": v.Progress, "lastRun": v.LastRun, "statuses": statuses}, nil)
+	respond(w, map[string]any{"revision": v.Revision, "configVersion": v.ConfigVersion, "directory": v.Dir, "config": v.Config, "state": v.State, "editing": v.Editing, "busy": v.Busy, "canceling": v.Canceling, "demo": v.Demo, "queue": v.Queue, "progress": v.Progress, "lastRun": v.LastRun, "work": v.Work, "statuses": statuses}, nil)
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
