@@ -12,7 +12,7 @@ September 14, 2026. These checks exercised deterministic sample data in the in-a
 - Select a text-only manual model; change to continuity research; resolve to a tool-capable model. The consistency-role selector disables the text-only fixture.
 - Show both story and chapter style instructions; change the local prose-model assignment.
 - Turn off automatic knowledge selection while leaving outline selection on and required attachments present.
-- Refuse Finish editing while saved changes lack invalidation choices; finish after explicit choices.
+- Finish editing leaves generation idle; unresolved prose choices are checked when the author requests generation.
 - Navigate with a dirty text buffer, return through Keep editing, preserve its content, and save with Ctrl+S while the pipeline stays paused.
 - Add a child to a leaf with prose, choose private-note retention, and verify the old parent prose no longer appears in the manuscript.
 - Import generated detail inside a brief without creating child jobs or duplicate navigator items.

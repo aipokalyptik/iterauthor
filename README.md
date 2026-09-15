@@ -42,7 +42,9 @@ Inference uses compatible Chat Completions APIs. Discovery reads compatible mode
 - **Activity:** inspect candidates, consistency/style findings, prompts, context, and tool calls; apply chosen proposals.
 - **Manuscript:** read active passages in story order and export Markdown.
 
-Text saves with **⌘S / Ctrl+S**; assistant messages send with **⌘Enter / Ctrl+Enter**. Changes to outlines, style, context, or active model selections offer choices about which existing prose to revisit. Setup and planning need no review when there are no passages or draft candidates. Connection details, unused models, execution limits, and automatic scheduling apply to future work without requiring regeneration. You can explicitly regenerate whenever you want to try new settings.
+Text saves with **⌘S / Ctrl+S**; assistant messages send with **⌘Enter / Ctrl+Enter**. Changes to outlines, style, context, or active model selections offer choices about which existing prose to revisit. Setup and planning need no review when there are no passages or draft candidates. Connection details, unused models, and execution limits apply to future work without requiring regeneration. You can explicitly regenerate whenever you want to try new settings.
+
+Generation starts only from an explicit draft/regenerate command, an outline-development request, a sent assistant message, or Test model. Opening a project, saving text or settings, reloading, importing/applying proposals, and invalidating prose never start inference. The old “generate after editing” setting is ignored, including in existing projects. Context selection and bounded reviews run as part of a requested operation; model catalog refreshes only read metadata.
 
 Unsaved text is guarded when navigating. One operation runs at a time; source editing unlocks after completion or cancellation. Closing a browser tab leaves work running in the server.
 

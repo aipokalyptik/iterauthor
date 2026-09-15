@@ -1,3 +1,5 @@
+> Current generation policy: all inference starts from an explicit author command. Saving, reloading, applying/importing proposals, invalidating prose, and Finish editing never start or resume generation. The earlier pause/resume concepts below do not authorize automatic work. The HTTP UI no longer offers a generate-after-editing setting.
+
 # Iterauthor: first interface specification
 
 Historical TUI design. The 0.2 test build pivots to an HTTP/browser interface; see [try-it.md](try-it.md) for the current workflow.

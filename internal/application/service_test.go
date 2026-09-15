@@ -316,13 +316,13 @@ func TestCoreRejectsInvalidProposalBeforeAnyWrites(t *testing.T) {
 	}
 }
 
-func TestEditingModeAutoGenerationAndModelCapabilities(t *testing.T) {
+func TestEditingModeRequiresExplicitGenerationAndModelCapabilities(t *testing.T) {
 	s := fixture(t, model.Demo{})
 	v := s.View()
 	v.Config.Models["writer"] = project.Model{Name: "Writer", Tools: false}
 	v.Config.Defaults = map[string]string{"prose": "writer"}
 	v.Config.AutoGenerate = true
-	check(t, s.SaveConfig(v.Config, "Enable automatic generation", v.Config.Root, v.ConfigVersion))
+	check(t, s.SaveConfig(v.Config, "Legacy automatic-generation setting", v.Config.Root, v.ConfigVersion))
 	v = s.View()
 	v.Config.Defaults["consistency"] = "writer"
 	if err := s.SaveConfig(v.Config, "Invalid reviewer", v.Config.Root, v.ConfigVersion); err == nil {
@@ -336,8 +336,13 @@ func TestEditingModeAutoGenerationAndModelCapabilities(t *testing.T) {
 	}
 	check(t, s.FinishEditing())
 	idle(t, s)
-	if s.View().Editing || s.Status("visit") != "Available" {
-		t.Fatal("finish editing did not run automatic queue")
+	if s.View().Editing || s.View().Busy || s.View().Work != nil || s.Status("visit") != "Missing" {
+		t.Fatal("finish editing started work from the legacy scheduling setting")
+	}
+	check(t, s.Generate(application.Selection{Scope: "branch", Target: "visit"}, false))
+	idle(t, s)
+	if s.Status("visit") != "Available" || s.Status("arrival") != "Missing" {
+		t.Fatal("explicit generation escaped the requested branch")
 	}
 }
 

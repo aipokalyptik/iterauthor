@@ -383,7 +383,6 @@ func (u *UI) limitsDialog() {
 	add("Output tokens (-1 = auto, 0 = unlimited)", &c.Limits.OutputTokens)
 	add("Input characters per call", &c.Limits.ContextChars)
 	add("Minutes per operation (0 = unlimited)", &c.Limits.Minutes)
-	f.AddCheckbox("Generate when editing is finished", c.AutoGenerate, func(v bool) { c.AutoGenerate = v })
 	u.form("Generation limits", f, func() error { return u.core.SaveConfig(c, "Changed generation limits", c.Root, revision) })
 }
 
@@ -392,7 +391,7 @@ func (u *UI) changes() {
 		return
 	}
 	if len(u.state.State.Changes) == 0 {
-		u.message("Saved changes", "No unresolved changes. Use Finish editing to release the pause.")
+		u.message("Saved changes", "No unresolved changes. Generation starts only on your command.")
 		return
 	}
 	list := tview.NewList().ShowSecondaryText(true)
@@ -407,7 +406,7 @@ func (u *UI) changes() {
 		}
 		u.closeDialog()
 		u.refresh()
-		u.notice("Choices saved. Finish editing when ready.")
+		u.notice("Choices saved. Use Generate when you are ready.")
 	})
 	list.AddItem("Invalidate entire story for ALL changes", "Authored prose stays protected; generation creates candidates.", 0, func() {
 		if err := u.core.DecideAll("story"); err != nil {
@@ -452,7 +451,7 @@ func (u *UI) decideChange(c project.Change) {
 			return
 		}
 		u.refresh()
-		u.notice("Invalidation choice saved. Finish editing when ready.")
+		u.notice("Invalidation choice saved. Use Generate when you are ready.")
 	})
 }
 func (u *UI) selectPassages(title string, done func([]string)) {

@@ -76,18 +76,19 @@ type Entry struct {
 }
 
 type Config struct {
-	Connections  map[string]Connection `json:"connections,omitempty"`
-	Inference    map[string]Inference  `json:"feature_inference,omitempty"`
-	Schema       int                   `json:"schema"`
-	Title        string                `json:"title"`
-	Root         string                `json:"root"`
-	Nodes        map[string]*Node      `json:"nodes"`
-	Knowledge    map[string]*Entry     `json:"knowledge"`
-	Models       map[string]Model      `json:"models"`
-	BaseModel    string                `json:"base_model"`
-	Defaults     map[string]string     `json:"feature_models,omitempty"`
-	Limits       Limits                `json:"limits"`
-	AutoGenerate bool                  `json:"generate_after_editing"`
+	Connections map[string]Connection `json:"connections,omitempty"`
+	Inference   map[string]Inference  `json:"feature_inference,omitempty"`
+	Schema      int                   `json:"schema"`
+	Title       string                `json:"title"`
+	Root        string                `json:"root"`
+	Nodes       map[string]*Node      `json:"nodes"`
+	Knowledge   map[string]*Entry     `json:"knowledge"`
+	Models      map[string]Model      `json:"models"`
+	BaseModel   string                `json:"base_model"`
+	Defaults    map[string]string     `json:"feature_models,omitempty"`
+	Limits      Limits                `json:"limits"`
+	// Deprecated: kept for old project files; it never starts generation.
+	AutoGenerate bool `json:"generate_after_editing"`
 }
 
 type Change struct {

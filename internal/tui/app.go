@@ -580,7 +580,7 @@ func (u *UI) saveEdit() bool {
 	if len(u.state.State.Changes) > 0 {
 		u.notice("Saved. Review affected prose before generating again.")
 	} else {
-		u.notice("Saved. Finish editing when ready.")
+		u.notice("Saved. Generate only when you are ready.")
 	}
 	return true
 }

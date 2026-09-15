@@ -53,19 +53,7 @@ The service is an in-process Go API, not an HTTP API. Its inputs and returned va
 
 `View` returns copies of config, passage state and queue information. Editing those copies cannot change the running project. Configuration forms submit the `ConfigVersion` received when opened; stale forms are rejected. Source saves supply the original text. Run application uses persisted run IDs and candidate indices, so an interface cannot accidentally substitute its own cached run body. Source edit proposals are checked in full for scope, permitted fields and freshness before any writes begin.
 
-For example, either interface can use the following sequence against an existing service:
-
-```go
-view := core.View()
-config := view.Config
-config.AutoGenerate = true
-if err := core.SaveConfig(config, "Enable automatic generation", config.Root, view.ConfigVersion); err != nil {
-    return err
-}
-// Scheduling changes do not require a prose review. Any already pending
-// writing changes must still be resolved before finishing editing.
-return core.FinishEditing()
-```
+Editing commands never start inference. `FinishEditing` only ends the editing pause; it does not start or resume a queue. The legacy `Config.AutoGenerate` field is ignored even when true in an existing project. Only explicit `Generate`, `Start`, `Send`, and `ProbeModel` requests can run models. Source changes and revisit decisions remain independent of the author's choice to generate.
 
 Explicit generation submits a selection and returns after admission, rather than waiting for the model:
 
@@ -108,7 +96,7 @@ The current single-process project lock, global editing pause, non-resumable que
 
 ## Evidence
 
-Headless application tests exercise unattended queues, an unresponsive subscriber, shared budgets, author-prose protection, cancellation/shutdown locking, conversation persistence, stale saves, scoped proposal validation, outline import/invalidation, automatic generation, project switching and subscription cleanup. Terminal tests separately cover navigation and editing, detached-worker completion, completion dialogs, and preserving unsent conversation text during cancel-and-quit.
+Headless application tests exercise unattended queues, an unresponsive subscriber, shared budgets, author-prose protection, cancellation/shutdown locking, conversation persistence, stale saves, scoped proposal validation, outline import/invalidation, explicit generation with legacy automatic scheduling disabled, project switching and subscription cleanup. Terminal tests separately cover navigation and editing, detached-worker completion, completion dialogs, and preserving unsent conversation text during cancel-and-quit.
 
 ## API connections and inference options
 

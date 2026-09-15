@@ -293,16 +293,6 @@ function renderShell() {
         ? "Unsaved text"
         : "Workspace";
   $("#mode").className = "badge " + (v.demo ? "warn" : "neutral");
-  let finish = $("#finish-editing");
-  if (!finish) {
-    finish = document.createElement("button");
-    finish.id = "finish-editing";
-    finish.dataset.action = "finish-editing";
-    finish.dataset.write = "";
-    finish.textContent = "Finish editing";
-    $("#mode").after(finish);
-  }
-  finish.hidden = !c.generate_after_editing || !v.editing;
   renderWorkStatus();
   renderAssistantStatus();
   const changes = v.state.changes || [];
@@ -1030,7 +1020,7 @@ function renderSettings() {
       )
       .join(
         "",
-      )}</div><div class="field"><label for="project-output-mode">Output tokens per call</label><select id="project-output-mode" name="project-output-mode" data-output-mode="project"><option value="automatic" ${c.limits.output_tokens === -1 ? "selected" : ""}>Automatic (fit available context)</option><option value="unlimited" ${c.limits.output_tokens === 0 ? "selected" : ""}>Unlimited (no app cap)</option><option value="limited" ${c.limits.output_tokens > 0 ? "selected" : ""}>Custom limit</option></select><input id="project-output-tokens" name="project-output-tokens" aria-label="Custom output tokens" type="number" min="64" max="1048576" value="${c.limits.output_tokens > 0 ? c.limits.output_tokens : 16384}" ${c.limits.output_tokens > 0 ? "" : "hidden disabled"}><small>Automatic budgets by task and reported context size, with an estimated input allowance. Unlimited leaves output length to the model server; its configured limit still applies. Model and task settings can override this limit.</small></div><label class="check"><input name="automatic" type="checkbox" ${c.generate_after_editing ? "checked" : ""}>Draft missing or invalidated prose when I finish editing</label><div class="actions"><button type="submit" class="primary" data-write>Save settings</button><button type="button" data-action="finish-editing" data-write>Finish editing</button></div></form></div><div class="card"><h3>Project files</h3><p class="muted small"><code>${esc(ui.view.directory)}</code></p><p class="small muted">Your outlines and wiki remain Markdown files. Pause generation before external edits, then reload.</p><button data-action="reload" data-write>Reload project files</button></div>`;
+      )}</div><div class="field"><label for="project-output-mode">Output tokens per call</label><select id="project-output-mode" name="project-output-mode" data-output-mode="project"><option value="automatic" ${c.limits.output_tokens === -1 ? "selected" : ""}>Automatic (fit available context)</option><option value="unlimited" ${c.limits.output_tokens === 0 ? "selected" : ""}>Unlimited (no app cap)</option><option value="limited" ${c.limits.output_tokens > 0 ? "selected" : ""}>Custom limit</option></select><input id="project-output-tokens" name="project-output-tokens" aria-label="Custom output tokens" type="number" min="64" max="1048576" value="${c.limits.output_tokens > 0 ? c.limits.output_tokens : 16384}" ${c.limits.output_tokens > 0 ? "" : "hidden disabled"}><small>Automatic budgets by task and reported context size, with an estimated input allowance. Unlimited leaves output length to the model server; its configured limit still applies. Model and task settings can override this limit.</small></div><p class="muted small">Generation starts only when you request a draft, develop an outline, send an assistant message, or test a model. Saving, reloading, and invalidating content do not start model work.</p><div class="actions"><button type="submit" class="primary" data-write>Save settings</button></div></form></div><div class="card"><h3>Project files</h3><p class="muted small"><code>${esc(ui.view.directory)}</code></p><p class="small muted">Your outlines and wiki remain Markdown files. Pause generation before external edits, then reload.</p><button data-action="reload" data-write>Reload project files</button></div>`;
   const form = $("#settings-form");
   form.dataset.version = ui.view.configVersion;
   form.addEventListener("input", () => (ui.settingsDirty = true));
@@ -1053,7 +1043,6 @@ async function saveSettings() {
   for (const key of Object.keys(next.limits))
     next.limits[key] = Number(f.get(key));
   next.limits.output_tokens = f.get("project-output-mode") === "unlimited" ? 0 : f.get("project-output-mode") === "automatic" ? -1 : Number(f.get("project-output-tokens"));
-  next.generate_after_editing = f.has("automatic");
   await command("config", {
     config: next,
     expected: form.dataset.version,
@@ -1447,15 +1436,6 @@ document.addEventListener("click", async (event) => {
           }
           await renderMain();
           notice("Project files reloaded.");
-        }
-        break;
-      case "finish-editing":
-        if (requireSaved()) {
-          if (ui.view.state.changes?.length) reviewChanges();
-          else {
-            await command("finish-editing");
-            notice("Editing finished.");
-          }
         }
         break;
       case "export":

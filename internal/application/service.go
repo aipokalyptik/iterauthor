@@ -180,22 +180,16 @@ func (s *Service) edit(fn func() error) error {
 
 func (s *Service) BeginEditing() error { return s.edit(func() error { return nil }) }
 
-// FinishEditing resolves the global pause. Automatic generation uses the same
-// queue and eligibility rules as an explicit Generate command.
+// FinishEditing ends the editing pause without starting or resuming model work.
+// Only explicit Generate, Start, Send, and ProbeModel requests run inference.
 func (s *Service) FinishEditing() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.idle(); err != nil {
 		return err
 	}
-	if len(s.store.State.Changes) > 0 {
-		return ErrChanges
-	}
 	s.editing = false
 	s.changed()
-	if s.store.Config.AutoGenerate {
-		return s.generate(Selection{Scope: "story"}, false)
-	}
 	return nil
 }
 

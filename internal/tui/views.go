@@ -300,7 +300,7 @@ func (u *UI) settingsView() {
 		}
 		fmt.Fprintf(&b, "%s: %s%s\n  %s\n  model=%s · tools=%t\n", id, m.Name, mark, m.URL, m.Model, m.Tools)
 	}
-	fmt.Fprintf(&b, "\nGENERATION LIMITS\n%d draft attempts per passage\n%d total calls per requested operation/queue\n%d output tokens per call\n%d input characters per call\n%d minutes per operation/queue\nGenerate after editing: %t\n", c.Limits.Drafts, c.Limits.Calls, c.Limits.OutputTokens, c.Limits.ContextChars, c.Limits.Minutes, c.AutoGenerate)
+	fmt.Fprintf(&b, "\nGENERATION LIMITS\n%d draft attempts per passage\n%d total calls per requested operation/queue\n%d output tokens per call\n%d input characters per call\n%d minutes per operation/queue\nGeneration starts only on your command.\n", c.Limits.Drafts, c.Limits.Calls, c.Limits.OutputTokens, c.Limits.ContextChars, c.Limits.Minutes)
 	b.WriteString("\nEndpoints are reached from this machine. API credentials are environment variables, not story files.\n\nOne operation runs at a time. Queues are explicit and canceled before editing. Pricing is not available; call/output/time caps bound usage.")
 	u.view.SetText(b.String())
 	u.document.AddItem(u.view, 0, 1, true)
@@ -409,10 +409,6 @@ func (u *UI) execute(cmd string) {
 		if u.state.Editing {
 			if u.editor != nil {
 				u.notice("Save or cancel the open buffer first.")
-				return
-			}
-			if len(u.state.State.Changes) > 0 {
-				u.changes()
 				return
 			}
 			if err := u.core.FinishEditing(); err != nil {

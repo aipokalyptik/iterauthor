@@ -43,7 +43,7 @@ func TestConfigurationChangesDistinguishWritingFromOperations(t *testing.T) {
 		{"limits", false, func(c *Config) {
 			c.Limits = Limits{Drafts: 2, Calls: 10, OutputTokens: 1024, ContextChars: 32000, Minutes: 10}
 		}},
-		{"automatic scheduling", false, func(c *Config) { c.AutoGenerate = true }},
+		{"legacy scheduling flag", false, func(c *Config) { c.AutoGenerate = true }},
 		{"same effective default", false, func(c *Config) { c.Defaults = map[string]string{"prose": "base"} }},
 		{"same effective override", false, func(c *Config) { c.Nodes["visit"].Models = map[string]string{"prose": "base"} }},
 		{"same effective context toggle", false, func(c *Config) { on := true; c.Nodes["visit"].AutoKnowledge = &on }},
