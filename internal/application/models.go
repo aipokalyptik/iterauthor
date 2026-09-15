@@ -105,12 +105,23 @@ func (s *Service) SaveModel(id string, m project.Model, base bool, expected stri
 		if err != nil {
 			return err
 		}
-		c := s.store.Config.Clone()
+		c := s.store.Config.WithConnections()
 		if id == "" {
 			id = project.NewID()
 		}
 		if !project.ValidID(id) {
 			return fmt.Errorf("invalid model identity")
+		}
+		if m.Connection != "" {
+			con, ok := c.Connections[m.Connection]
+			if !ok {
+				return fmt.Errorf("unknown API connection")
+			}
+			con.URL, con.KeyEnv = m.URL, m.KeyEnv
+			c.Connections[m.Connection] = con
+			if con.Provider != "" {
+				m.Provider = con.Provider
+			}
 		}
 		c.Models[id] = m
 		if base {

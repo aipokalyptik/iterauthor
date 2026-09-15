@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/aipokalyptik/iterauthor/internal/engine"
 	"github.com/aipokalyptik/iterauthor/internal/project"
@@ -76,7 +75,7 @@ func (s *Service) generate(sel Selection, force bool) error {
 		s.changed()
 		return nil
 	}
-	snapshot, err := s.store.Snapshot()
+	snapshot, err := s.snapshot()
 	if err != nil {
 		return err
 	}
@@ -106,6 +105,9 @@ func (s *Service) Start(job Job) error {
 	if job.Kind == "test" && job.Model == "" {
 		job.Model = s.store.Config.BaseModel
 	}
+	if err := s.rememberModel(job.Model); err != nil {
+		return err
+	}
 	if job.Model != "" {
 		if _, ok := s.store.Config.Models[job.Model]; !ok {
 			return fmt.Errorf("unknown model")
@@ -114,7 +116,7 @@ func (s *Service) Start(job Job) error {
 			return fmt.Errorf("this model is configured without tools")
 		}
 	}
-	snapshot, err := s.store.Snapshot()
+	snapshot, err := s.snapshot()
 	if err != nil {
 		return err
 	}
@@ -125,7 +127,7 @@ func (s *Service) Start(job Job) error {
 }
 
 func (s *Service) start(job Job, conversation string) context.Context {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.store.Config.Limits.Minutes)*time.Minute)
+	ctx, cancel := project.WorkContext(context.Background(), s.store.Config.Limits.Minutes)
 	s.cancel, s.done = cancel, make(chan struct{})
 	s.busy, s.canceling = true, false
 	s.progress = "Starting work"
@@ -207,7 +209,7 @@ func (s *Service) work(ctx context.Context, snapshot project.Snapshot, job Job, 
 			return
 		}
 		var err error
-		snapshot, err = s.store.Snapshot()
+		snapshot, err = s.snapshot()
 		if err != nil {
 			s.progress = err.Error()
 			s.mu.Unlock()
@@ -235,7 +237,7 @@ func (s *Service) Send(id, prompt string) error {
 	if err = s.validateConversation(c); err != nil {
 		return err
 	}
-	snapshot, err := s.store.Snapshot()
+	snapshot, err := s.snapshot()
 	if err != nil {
 		return err
 	}

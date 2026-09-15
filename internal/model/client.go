@@ -25,10 +25,12 @@ type ToolCall struct {
 	Function Function `json:"function"`
 }
 type Message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	ReasoningContent string          `json:"reasoning_content,omitempty"`
+	Reasoning        json.RawMessage `json:"reasoning,omitempty"`
+	Role             string          `json:"role"`
+	Content          string          `json:"content"`
+	ToolCalls        []ToolCall      `json:"tool_calls,omitempty"`
+	ToolCallID       string          `json:"tool_call_id,omitempty"`
 }
 type Tool struct {
 	Type     string     `json:"type"`
@@ -40,9 +42,12 @@ type Definition struct {
 	Parameters  map[string]any `json:"parameters"`
 }
 type Response struct {
-	Message Message
-	Tokens  int
-	Finish  string
+	InputTokens     *int `json:"input_tokens,omitempty"`
+	OutputTokens    *int `json:"output_tokens,omitempty"`
+	ReasoningTokens *int `json:"reasoning_tokens,omitempty"`
+	Message         Message
+	Tokens          int
+	Finish          string
 }
 type Client interface {
 	Complete(context.Context, project.Model, []Message, []Tool, int) (Response, error)
@@ -51,7 +56,7 @@ type Client interface {
 type HTTP struct{ Client *http.Client }
 
 func NewHTTP() *HTTP {
-	return &HTTP{Client: &http.Client{Timeout: 5 * time.Minute, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	return &HTTP{Client: &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		return fmt.Errorf("model endpoint redirected; configure its final URL")
 	}}}
 }
@@ -71,11 +76,22 @@ func (h *HTTP) Complete(ctx context.Context, m project.Model, messages []Message
 	field := m.TokenField
 	if field == "" {
 		field = "max_tokens"
+		if m.Provider == "OpenAI" {
+			field = "max_completion_tokens"
+		}
 	}
 	if field != "max_tokens" && field != "max_completion_tokens" {
 		return result, fmt.Errorf("token field must be max_tokens or max_completion_tokens")
 	}
-	payload[field] = maxTokens
+	if maxTokens < 0 {
+		return result, fmt.Errorf("output-token limit cannot be negative")
+	}
+	if maxTokens > 0 {
+		payload[field] = maxTokens
+	}
+	if err := ApplyReasoning(payload, m); err != nil {
+		return result, err
+	}
 	if len(tools) > 0 {
 		if !m.Tools {
 			return result, fmt.Errorf("%s is configured without tool support", m.Name)
@@ -105,12 +121,12 @@ func (h *HTTP) Complete(ctx context.Context, m project.Model, messages []Message
 		return result, fmt.Errorf("model request: %w", err)
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024+1))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 32*1024*1024+1))
 	if err != nil {
 		return result, err
 	}
-	if len(b) > 2*1024*1024 {
-		return result, fmt.Errorf("model response exceeds 2 MiB")
+	if len(b) > 32*1024*1024 {
+		return result, fmt.Errorf("model response exceeds 32 MiB")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		message := string(b)
@@ -125,15 +141,22 @@ func (h *HTTP) Complete(ctx context.Context, m project.Model, messages []Message
 	var envelope struct {
 		Choices []struct {
 			Message struct {
-				Role      string          `json:"role"`
-				Content   json.RawMessage `json:"content"`
-				ToolCalls []ToolCall      `json:"tool_calls"`
-				Refusal   string          `json:"refusal"`
+				Role             string          `json:"role"`
+				Content          json.RawMessage `json:"content"`
+				ToolCalls        []ToolCall      `json:"tool_calls"`
+				ReasoningContent string          `json:"reasoning_content"`
+				Reasoning        json.RawMessage `json:"reasoning"`
+				Refusal          string          `json:"refusal"`
 			} `json:"message"`
 			Finish string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage struct {
-			Tokens int `json:"total_tokens"`
+			Tokens  int  `json:"total_tokens"`
+			Input   *int `json:"prompt_tokens"`
+			Output  *int `json:"completion_tokens"`
+			Details struct {
+				Reasoning *int `json:"reasoning_tokens"`
+			} `json:"completion_tokens_details"`
 		} `json:"usage"`
 	}
 	if err = json.Unmarshal(b, &envelope); err != nil {
@@ -143,6 +166,7 @@ func (h *HTTP) Complete(ctx context.Context, m project.Model, messages []Message
 		return result, fmt.Errorf("model response contained no choices")
 	}
 	c := envelope.Choices[0]
+	result = Response{Tokens: envelope.Usage.Tokens, Finish: c.Finish, InputTokens: envelope.Usage.Input, OutputTokens: envelope.Usage.Output, ReasoningTokens: envelope.Usage.Details.Reasoning}
 	if c.Message.Refusal != "" {
 		return result, fmt.Errorf("model refused: %s", c.Message.Refusal)
 	}
@@ -152,16 +176,17 @@ func (h *HTTP) Complete(ctx context.Context, m project.Model, messages []Message
 			return result, fmt.Errorf("expected a text chat response")
 		}
 	}
+	result.Message = Message{Role: "assistant", Content: content, ToolCalls: c.Message.ToolCalls, ReasoningContent: c.Message.ReasoningContent, Reasoning: c.Message.Reasoning}
 	if c.Finish == "length" {
 		if strings.TrimSpace(content) == "" {
-			return Response{Message: Message{Role: "assistant"}, Tokens: envelope.Usage.Tokens, Finish: c.Finish}, fmt.Errorf("model reached its output-token limit before returning any visible text; increase Output tokens in Project settings or choose a different model, then retry")
+			return result, fmt.Errorf("model reached its output-token limit before returning any visible text; adjust Output tokens or reasoning in Model settings or Project settings (or the server limit when unlimited), then retry")
 		}
-		return Response{Message: Message{Role: "assistant", Content: content}, Tokens: envelope.Usage.Tokens, Finish: c.Finish}, fmt.Errorf("model output reached its token limit; partial output retained; increase output_tokens or narrow the task")
+		return result, fmt.Errorf("model output reached its token limit; partial output retained; increase output_tokens or narrow the task")
 	}
 	if content == "" && len(c.Message.ToolCalls) == 0 {
 		return result, fmt.Errorf("model returned empty text and no tool calls")
 	}
-	return Response{Message: Message{Role: "assistant", Content: content, ToolCalls: c.Message.ToolCalls}, Tokens: envelope.Usage.Tokens, Finish: c.Finish}, nil
+	return result, nil
 }
 
 // Demo exercises the same engine, tools, budgets and persistence without a server.

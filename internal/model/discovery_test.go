@@ -116,7 +116,13 @@ func TestDiscoverErrorsAndRedirects(t *testing.T) {
 				}
 			}))
 			defer srv.Close()
-			_, err := NewHTTP().Discover(context.Background(), Endpoint{URL: srv.URL, KeyEnv: "ITERAUTHOR_DISCOVERY_KEY"})
+			catalog, err := NewHTTP().Discover(context.Background(), Endpoint{URL: srv.URL, KeyEnv: "ITERAUTHOR_DISCOVERY_KEY"})
+			if kind == "empty" {
+				if err != nil || len(catalog.Models) != 0 {
+					t.Fatalf("empty catalog: %+v %v", catalog, err)
+				}
+				return
+			}
 			if err == nil || strings.Contains(err.Error(), "do-not-expose") || leaked.Load() {
 				t.Fatalf("unsafe result: %v", err)
 			}
@@ -150,7 +156,7 @@ func TestProbeNegotiatesTokensAndVerifiesToolExchange(t *testing.T) {
 					http.Error(w, `use max_completion_tokens`, 400)
 					return
 				}
-				if req.Completion != 512 || n > 4 {
+				if req.Completion != 32768 || n > 4 {
 					t.Error("unbounded connection test")
 				}
 				content := Message{Role: "assistant", Content: "Ready."}

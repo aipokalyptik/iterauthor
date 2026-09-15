@@ -4,7 +4,7 @@ September 14, 2026. Development host: macOS arm64, Go 1.27.0. Source declares Go
 
 ## Automated checks
 
-The 50 tests across six packages passed with the race detector, followed by `go vet ./...`. The full suite ran through `make test`; after adding legacy-conversation status recovery, application and web tests were rerun with the race detector. Each package has a 60-second test timeout; UI waits and fake network startup have shorter bounds.
+The full test suite across six packages passed with the race detector, followed by `go vet ./...`. The suite ran through `make test`; targeted application tests were rerun after tightening catalog snapshot isolation. Each package has a 60-second test timeout; UI waits and fake network startup have shorter bounds.
 
 - File store: private-note exclusion, leaf-to-parent conversion, inherited settings/attachments, stale external saves, invalid tree reload, single-process locking, failed-open cleanup, protected authored prose, stale candidate rejection, and changes discovered after restart.
 - Change classification: setup/planning saves need no prose review; active prose and retained draft candidates do. Operational configuration changes preserve candidate/proposal freshness, while writing inputs and effective model selections request review. External operational edits still require Reload. Restart resolves the three obsolete model-setup prompts without changing the project or duplicating history; unchanged legacy cached-run fingerprints survive upgrade. No-op configuration saves produce no decisions.
@@ -43,7 +43,14 @@ The preceding 0.1 PTY checks also covered a zero-directory-argument launch from 
 ## Not established by these checks
 
 - Actual iTerm → SSH → Debian operation, SSH tunnel configuration, or behavior of a specific tmux setup.
-- Live LM Studio, Ollama, llama.cpp, or hosted model quality/compatibility. No endpoint or credentials were supplied for those trials. Use Test selected model and a small passage first.
+- Live LM Studio, Ollama, llama.cpp, or hosted model quality/compatibility. No endpoint or credentials were supplied for those trials. Use Test model and a small passage first.
 - Improved fiction quality, novel-scale continuity, lower author effort, accessibility, or crash-atomic multi-file transactions.
 
 Those are trial results to collect, not claims inferred from passing software tests.
+
+## API catalogs and inference settings
+
+- Deterministic HTTP tests cover output-cap omission, explicit Chat Completions token fields, reasoning effort and chat-template controls, unsupported reasoning choices, optional usage counters, and reasoning state retained across tool messages.
+- Application tests exercise authenticated catalog refreshes, additions/removals, offline cache retention, restart recovery, stale responses after connection edits, detached metadata views, and selection from an already-open form. Refreshing does not run inference or modify author configuration versions.
+- Engine tests exercise a complete draft/review workflow with different inherited settings per stage and an unlimited operation deadline, checking the actual model/client arguments and retained trace options.
+- Browser checks cover connection creation, model selection, reported reasoning choices, settings persistence, and assistant submission against a controlled HTTP API. Captured request parameters verify reasoning off and omitted token caps. Fixtures verify request construction and app behavior, not real-model writing quality or whether a third-party server honors a setting.

@@ -76,6 +76,21 @@ func New(core *application.Service) http.Handler {
 		catalog, err := core.DiscoverModels(r.Context(), input)
 		respond(w, catalog, err)
 	})
+	mux.HandleFunc("POST /api/connections/refresh", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			ID string `json:"id"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		if input.ID == "" {
+			core.RefreshConnections(r.Context())
+			respond(w, nil, nil)
+		} else {
+			err := core.RefreshConnection(r.Context(), input.ID)
+			respond(w, nil, err)
+		}
+	})
 	mux.HandleFunc("POST /api/models/probe", func(w http.ResponseWriter, r *http.Request) {
 		var input project.Model
 		if !decode(w, r, &input) {
@@ -178,7 +193,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	for _, id := range v.Config.Leaves(v.Config.Root) {
 		statuses[id] = s.core.Status(id)
 	}
-	respond(w, map[string]any{"revision": v.Revision, "configVersion": v.ConfigVersion, "directory": v.Dir, "config": v.Config, "state": v.State, "editing": v.Editing, "busy": v.Busy, "canceling": v.Canceling, "demo": v.Demo, "queue": v.Queue, "progress": v.Progress, "lastRun": v.LastRun, "work": v.Work, "statuses": statuses}, nil)
+	respond(w, map[string]any{"revision": v.Revision, "configVersion": v.ConfigVersion, "directory": v.Dir, "config": v.Config, "state": v.State, "editing": v.Editing, "busy": v.Busy, "canceling": v.Canceling, "demo": v.Demo, "queue": v.Queue, "progress": v.Progress, "lastRun": v.LastRun, "work": v.Work, "catalogs": v.Catalogs, "statuses": statuses}, nil)
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
@@ -227,25 +242,26 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 }
 
 type command struct {
-	Action     string         `json:"action"`
-	ID         string         `json:"id"`
-	Target     string         `json:"target"`
-	Field      string         `json:"field"`
-	Text       string         `json:"text"`
-	Expected   string         `json:"expected"`
-	Title      string         `json:"title"`
-	Kind       string         `json:"kind"`
-	Handling   string         `json:"handling"`
-	Choice     string         `json:"choice"`
-	All        bool           `json:"all"`
-	IDs        []string       `json:"ids"`
-	Scope      string         `json:"scope"`
-	Force      bool           `json:"force"`
-	Index      int            `json:"index"`
-	Model      string         `json:"model"`
-	Base       bool           `json:"base"`
-	Connection project.Model  `json:"connection"`
-	Config     project.Config `json:"config"`
+	Action     string             `json:"action"`
+	ID         string             `json:"id"`
+	Target     string             `json:"target"`
+	Field      string             `json:"field"`
+	Text       string             `json:"text"`
+	Expected   string             `json:"expected"`
+	Title      string             `json:"title"`
+	Kind       string             `json:"kind"`
+	Handling   string             `json:"handling"`
+	Choice     string             `json:"choice"`
+	All        bool               `json:"all"`
+	IDs        []string           `json:"ids"`
+	Scope      string             `json:"scope"`
+	Force      bool               `json:"force"`
+	Index      int                `json:"index"`
+	Model      string             `json:"model"`
+	Base       bool               `json:"base"`
+	API        project.Connection `json:"api"`
+	Connection project.Model      `json:"connection"`
+	Config     project.Config     `json:"config"`
 }
 
 func (s *Server) command(w http.ResponseWriter, r *http.Request) {
@@ -301,6 +317,13 @@ func (s *Server) command(w http.ResponseWriter, r *http.Request) {
 		err = core.SaveDraft(c.ID, c.Text)
 	case "conversation-model":
 		err = core.SetConversationModel(c.ID, c.Model)
+	case "save-connection":
+		var id string
+		id, err = core.SaveConnection(c.ID, c.API, c.Expected)
+		if err == nil {
+			_ = core.RefreshConnection(r.Context(), id)
+			value = id
+		}
 	case "save-model":
 		value, err = core.SaveModel(c.ID, c.Connection, c.Base, c.Expected)
 	case "export":

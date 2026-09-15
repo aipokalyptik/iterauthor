@@ -316,9 +316,21 @@ func (u *UI) modelDialog(id string) {
 		idx = 1
 	}
 	f.AddDropDown("Output limit field", []string{"max_tokens", "max_completion_tokens"}, idx, func(v string, _ int) { m.TokenField = v })
+	levels := []string{"", "off", "on", "minimal", "low", "medium", "high", "xhigh"}
+	reasoningIndex := 0
+	for i, value := range levels {
+		if value == m.Reasoning {
+			reasoningIndex = i
+		}
+	}
+	f.AddDropDown("Reasoning (blank = server default)", levels, reasoningIndex, func(value string, _ int) { m.Reasoning = value })
 	u.form("Configure model connection", f, func() error {
 		if strings.TrimSpace(m.Name) == "" || strings.TrimSpace(m.Model) == "" {
 			return fmt.Errorf("label and model identifier are required")
+		}
+		if con, ok := c.Connections[m.Connection]; ok {
+			con.URL, con.KeyEnv = m.URL, m.KeyEnv
+			c.Connections[m.Connection] = con
 		}
 		c.Models[id] = m
 		if base {
@@ -368,9 +380,9 @@ func (u *UI) limitsDialog() {
 	}
 	add("Draft attempts (1–10)", &c.Limits.Drafts)
 	add("Total model calls (1–200)", &c.Limits.Calls)
-	add("Output tokens per call", &c.Limits.OutputTokens)
+	add("Output tokens per call (0 = unlimited)", &c.Limits.OutputTokens)
 	add("Input characters per call", &c.Limits.ContextChars)
-	add("Minutes per operation", &c.Limits.Minutes)
+	add("Minutes per operation (0 = unlimited)", &c.Limits.Minutes)
 	f.AddCheckbox("Generate when editing is finished", c.AutoGenerate, func(v bool) { c.AutoGenerate = v })
 	u.form("Generation limits", f, func() error { return u.core.SaveConfig(c, "Changed generation limits", c.Root, revision) })
 }

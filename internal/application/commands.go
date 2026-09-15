@@ -34,7 +34,34 @@ func (s *Service) SaveConfig(c project.Config, description, target, expectedVers
 		if configVersion(s.store.Config) != expectedVersion {
 			return ErrStale
 		}
-		return s.store.SaveConfig(c.Clone(), description, target)
+		// A dropdown may have refreshed since this form opened. Resolve any new
+		// selections against the current catalog without altering other edits.
+		c = c.Clone()
+		live := s.modelConfig()
+		if c.Connections == nil {
+			c.Connections = map[string]project.Connection{}
+		}
+		add := func(id string) {
+			if _, ok := c.Models[id]; ok {
+				return
+			}
+			if m, ok := live.Models[id]; ok {
+				c.Models[id] = m
+				if con, ok := live.Connections[m.Connection]; ok {
+					c.Connections[m.Connection] = con
+				}
+			}
+		}
+		add(c.BaseModel)
+		for _, id := range c.Defaults {
+			add(id)
+		}
+		for _, n := range c.Nodes {
+			for _, id := range n.Models {
+				add(id)
+			}
+		}
+		return s.store.SaveConfig(c, description, target)
 	})
 }
 func (s *Service) Reload() error { return s.edit(func() error { return s.store.Reload() }) }
@@ -250,6 +277,9 @@ func (s *Service) NewConversation(target, mode, model string) (project.Conversat
 				model = s.store.Config.BaseModel
 			}
 		}
+		if err := s.rememberModel(model); err != nil {
+			return err
+		}
 		c = project.Conversation{ID: project.NewID(), Target: target, Mode: mode, Model: model}
 		if err := s.validateConversation(c); err != nil {
 			return err
@@ -266,6 +296,9 @@ func (s *Service) SetConversationModel(id, model string) error {
 	return s.edit(func() error {
 		c, err := s.store.LoadConversation(id)
 		if err != nil {
+			return err
+		}
+		if err := s.rememberModel(model); err != nil {
 			return err
 		}
 		c.Model = model

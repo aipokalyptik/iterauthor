@@ -143,6 +143,9 @@ func (h *HTTP) Discover(ctx context.Context, endpoint Endpoint) (Catalog, error)
 	type attempt struct{ path, provider string }
 	paths := []attempt{{base + "/models", "Compatible API"}, {root + "/api/v1/models", "LM Studio"}, {root + "/api/v0/models", "LM Studio"}, {root + "/api/tags", "Ollama"}}
 	result := Catalog{URL: base, Provider: "Compatible API", Notice: "Capability metadata is advisory. Test the selected model before using it."}
+	if u, _ := url.Parse(base); u.Hostname() == "api.openai.com" {
+		result.Provider = "OpenAI"
+	}
 	byID := map[string]AvailableModel{}
 	var firstErr error
 	listed := false
@@ -178,6 +181,9 @@ func (h *HTTP) Discover(ctx context.Context, endpoint Endpoint) (Catalog, error)
 			}
 			old, exists := byID[m.ID]
 			if exists {
+				if len(m.Reasoning) == 0 {
+					m.Reasoning = old.Reasoning
+				}
 				if m.Tools == nil {
 					m.Tools = old.Tools
 				}
@@ -201,7 +207,9 @@ func (h *HTTP) Discover(ctx context.Context, endpoint Endpoint) (Catalog, error)
 		if firstErr != nil && !listed {
 			return result, fmt.Errorf("no models discovered: %w; check the API URL and optional authentication", firstErr)
 		}
-		return result, fmt.Errorf("the server returned no models; load or download a model in your model server, then discover again")
+		result.Models = []AvailableModel{}
+		result.Notice = "The server returned no models; load or download a model, then refresh."
+		return result, nil
 	}
 	for _, m := range byID {
 		result.Models = append(result.Models, m)
@@ -296,14 +304,26 @@ func (h *HTTP) Probe(ctx context.Context, m project.Model) (ProbeResult, error) 
 	if m.Name == "" {
 		m.Name = m.Model
 	}
-	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	messages := []Message{{Role: "system", Content: "This is a brief connection test. Reply with Ready."}, {Role: "user", Content: "Reply with Ready."}}
-	m.TokenField = "max_tokens"
-	response, err := h.Complete(ctx, m, messages, nil, 512)
+	if m.TokenField == "" {
+		m.TokenField = "max_tokens"
+		if m.Provider == "OpenAI" {
+			m.TokenField = "max_completion_tokens"
+		}
+	}
+	budget := 8192
+	if m.Reasoning != "off" && m.Reasoning != "none" {
+		budget = 32768
+	}
+	if m.Context > 0 && budget > m.Context-1024 {
+		budget = max(64, m.Context-1024)
+	}
+	response, err := h.Complete(ctx, m, messages, nil, budget)
 	if err != nil && strings.Contains(err.Error(), "max_completion_tokens") {
 		m.TokenField = "max_completion_tokens"
-		response, err = h.Complete(ctx, m, messages, nil, 512)
+		response, err = h.Complete(ctx, m, messages, nil, budget)
 	}
 	if err != nil {
 		return ProbeResult{}, err
@@ -316,7 +336,7 @@ func (h *HTTP) Probe(ctx context.Context, m project.Model) (ProbeResult, error) 
 	m.Tools = true
 	messages = []Message{{Role: "system", Content: "You are testing a tool connection. Call connection_check with value iterauthor, then reply Ready after reading the tool result."}, {Role: "user", Content: "Call connection_check now."}}
 	tool := Tool{Type: "function", Function: Definition{Name: "connection_check", Description: "Checks the connection; has no side effects.", Parameters: map[string]any{"type": "object", "properties": map[string]any{"value": map[string]any{"type": "string"}}, "required": []string{"value"}, "additionalProperties": false}}}
-	response, err = h.Complete(ctx, m, messages, []Tool{tool}, 512)
+	response, err = h.Complete(ctx, m, messages, []Tool{tool}, budget)
 	if ctx.Err() != nil {
 		return ProbeResult{}, ctx.Err()
 	}
@@ -337,7 +357,7 @@ func (h *HTTP) Probe(ctx context.Context, m project.Model) (ProbeResult, error) 
 		return result, nil
 	}
 	messages = append(messages, response.Message, Message{Role: "tool", ToolCallID: call.ID, Content: `{"ok":true}`})
-	response, err = h.Complete(ctx, m, messages, []Tool{tool}, 512)
+	response, err = h.Complete(ctx, m, messages, []Tool{tool}, budget)
 	if ctx.Err() != nil {
 		return ProbeResult{}, ctx.Err()
 	}

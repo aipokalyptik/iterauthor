@@ -19,6 +19,7 @@ type Candidate struct {
 	Style       *Review `json:"style,omitempty"`
 }
 type Trace struct {
+	Options  any    `json:"options,omitempty"`
 	Stage    string `json:"stage"`
 	Model    string `json:"model"`
 	Request  any    `json:"request"`

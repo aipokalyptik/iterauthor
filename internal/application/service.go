@@ -25,6 +25,7 @@ var (
 // View is detached from the service. Revision changes on progress as well as
 // source changes; ConfigVersion is the optimistic concurrency token for forms.
 type View struct {
+	Catalogs                                map[string]CatalogState
 	Revision                                uint64
 	ConfigVersion                           string
 	Dir                                     string
@@ -51,6 +52,8 @@ type Work struct {
 }
 
 type Service struct {
+	catalogs                                  map[string]CatalogState
+	projectEpoch                              uint64
 	mu                                        sync.Mutex
 	store                                     *project.Store
 	client                                    model.Client
@@ -69,8 +72,10 @@ type Service struct {
 // New transfers exclusive ownership of store to the service. The composition
 // root supplies the model client; neither the engine nor a UI chooses transport.
 func New(store *project.Store, client model.Client, demo bool) *Service {
-	return &Service{store: store, client: client, demo: demo, editing: true,
+	s := &Service{store: store, client: client, demo: demo, editing: true,
 		subscribers: make(map[chan struct{}]struct{}), revision: 1}
+	s.loadCatalogs()
+	return s
 }
 
 func configVersion(c project.Config) string {
@@ -90,7 +95,7 @@ func (s *Service) View() View {
 		work = &copy
 	}
 	return View{Revision: s.revision, ConfigVersion: configVersion(s.store.Config),
-		Dir: s.store.Dir, Config: s.store.Config.Clone(), State: state,
+		Dir: s.store.Dir, Config: s.modelConfig(), Catalogs: s.catalogView(), State: state,
 		Editing: s.editing, Busy: s.busy, Canceling: s.canceling, Closing: s.closing,
 		Demo: s.demo, Queue: append([]string(nil), s.queue...), Progress: s.progress, LastRun: s.lastRun, Work: work}
 }
@@ -266,6 +271,8 @@ func (s *Service) SwitchProject(dir, title string, create bool) error {
 		}
 		s.store.Close()
 		s.store = next
+		s.projectEpoch++
+		s.loadCatalogs()
 		s.lastRun, s.progress = "", ""
 		s.workInfo = nil
 		return nil

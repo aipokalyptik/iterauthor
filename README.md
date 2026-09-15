@@ -16,17 +16,19 @@ The project directory defaults to the **current working directory**. Run `iterau
 
 To connect directly from another machine, run `iterauthor --listen 0.0.0.0:8080` and open `http://YOUR-SERVER:8080`. You can also bind to a specific interface address or use `--listen :8080` for all interfaces. Localhost remains the default.
 
-## Connect a model
+## Connect an API
 
-Open **Models → Connect a model**:
+Open **Models → Add API connection**, name the connection, and enter its API URL and optional API-key environment variable. Save once, then choose a **Base model** from its model list. Each API/account has its own group in the model dropdowns for tasks, outlines, and conversations.
 
-1. Enter the API URL and select **Discover models**.
-2. Choose from the returned models. Available metadata appears beside the choice.
-3. **Test selected model**, then **Save connection**.
+Lists refresh every minute, independently of generation, and have a manual **Refresh models** button. The last successful catalog is cached for offline use. Refreshing never switches a saved assignment or changes generation inputs. Existing per-model connections are grouped by API URL and credential reference while keeping their model IDs and assignments.
 
-The connection test checks text and a complete tool exchange, and automatically chooses the supported output-token parameter. A tool-capable base model handles every task. Text-only models can serve outlining, prose, and style. Task defaults and subtree overrides remain optional.
+**Model settings** exposes reasoning and an inherited, unlimited, or custom output limit. Task settings and individual outlines can override both, with inheritance down the tree. Reported reasoning options constrain requests; unsupported settings produce an error instead of silently choosing another level. APIs without reasoning metadata use their default unless you explicitly choose an option. For llama.cpp, select that server type; a chat-template compatibility option is also available for compatible servers that need it.
 
-Inference uses compatible Chat Completions APIs. Discovery reads compatible model lists and optional LM Studio/Ollama metadata. Providers expose different amounts of metadata; the UI does not invent missing capabilities. Server loading, temperature, and reasoning settings retain their defaults. Authentication uses an optional environment-variable name; secrets stay on the server.
+New projects default to **Unlimited (no app cap)** for output tokens. This omits the output-limit parameter; the model server's defaults and context limits still apply. Existing project limits are preserved. **Project settings** also permits a zero-minute time limit (unlimited); otherwise the operation's time limit controls requests, without a hidden five-minute HTTP cutoff. Model-call and draft-attempt limits remain separate. Unlimited does not automatically continue truncated output or retry calls.
+
+The optional **Test model** checks text and a complete tool exchange, using up to four calls and five minutes. It can load a local model or incur provider charges. Tool capability that was not reported is labeled unverified; explicitly text-only models cannot serve tasks requiring tools. A tool-capable base model handles every task. Text-only models can serve outlining, prose, and style.
+
+Inference uses compatible Chat Completions APIs. Discovery reads compatible model lists and optional LM Studio/Ollama metadata. Authentication uses an environment-variable name per connection; secrets stay on the server. Server model-loading settings remain outside Iterauthor.
 
 ## Write and revise
 

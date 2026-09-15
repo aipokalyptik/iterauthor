@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/aipokalyptik/iterauthor/internal/model"
@@ -29,7 +28,7 @@ type task struct {
 }
 
 func (e Engine) Run(ctx context.Context, s project.Snapshot, target, kind, manualModel, prompt string, history []project.Turn) (r project.Run) {
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(s.Config.Limits.Minutes)*time.Minute)
+	ctx, cancel := project.WorkContext(ctx, s.Config.Limits.Minutes)
 	defer cancel()
 	t := &task{engine: e, snapshot: s, ctx: ctx, edits: map[string]project.Edit{}, run: project.Run{ID: project.NewID(), Target: target, Kind: kind, Status: "Running", Started: project.Now(), Fingerprint: s.Fingerprint, Demo: e.Demo}}
 	defer func() {
@@ -326,7 +325,10 @@ func (t *task) review(role, prepared, text string, tools []model.Tool) (project.
 }
 
 func (t *task) ask(stage, system, user, modelID string, tools []model.Tool) (string, error) {
-	m, ok := t.snapshot.Config.Models[modelID]
+	_, ok := t.snapshot.Config.Models[modelID]
+	m := t.snapshot.Config.ConnectedModel(modelID)
+	options := t.snapshot.Config.InferenceFor(t.run.Target, stage, modelID)
+	m.Reasoning = options.Reasoning
 	if !ok {
 		return "", fmt.Errorf("unknown model %q", modelID)
 	}
@@ -352,9 +354,9 @@ func (t *task) ask(stage, system, user, modelID string, tools []model.Tool) (str
 		if err := t.checkpoint(fmt.Sprintf("%s · %s · call %d/%d", stage, m.Name, t.run.Calls, t.snapshot.Config.Limits.Calls)); err != nil {
 			return "", err
 		}
-		response, err := t.engine.Client.Complete(t.ctx, m, messages, tools, t.snapshot.Config.Limits.OutputTokens)
+		response, err := t.engine.Client.Complete(t.ctx, m, messages, tools, *options.OutputTokens)
 		t.run.FinishReason = response.Finish
-		t.run.Trace = append(t.run.Trace, project.Trace{Stage: stage, Model: modelID, Request: append([]model.Message(nil), messages...), Response: response})
+		t.run.Trace = append(t.run.Trace, project.Trace{Stage: stage, Model: modelID, Options: options, Request: append([]model.Message(nil), messages...), Response: response})
 		t.run.Tokens += response.Tokens
 		if err != nil {
 			return response.Message.Content, err

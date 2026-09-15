@@ -135,11 +135,15 @@ function configured() {
   return ui.view.demo || Boolean(c.models[c.base_model]?.model);
 }
 function modelOptions(selected = "", inherit = "", tools = false) {
-  const c = ui.view.config;
+  const c = ui.view.config, groups = new Map();
   let html = inherit ? `<option value="">${esc(inherit)}</option>` : "";
-  for (const [id, m] of Object.entries(c.models))
-    if ((m.model || ui.view.demo) && (!tools || m.tools))
-      html += `<option value="${esc(id)}" ${id === selected ? "selected" : ""}>${esc(m.name || m.model)}</option>`;
+  for (const [id,m] of Object.entries(c.models)) {
+    if (!(m.model || ui.view.demo) || (tools && !m.tools && id !== selected)) continue;
+    const group = m.connection || "";
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push(`<option value="${esc(id)}" ${id === selected ? "selected" : ""} ${tools && !m.tools ? "disabled" : ""}>${esc(m.name || m.model)}${modelAvailability(m)}</option>`);
+  }
+  for (const [group, options] of groups) html += `<optgroup label="${esc(c.connections?.[group]?.name || "Saved models")}">${options.join("")}</optgroup>`;
   return html;
 }
 function requireSaved() {
@@ -218,6 +222,13 @@ async function refresh() {
         (finished || old.lastRun !== ui.view.lastRun)
       )
         await renderMain();
+      if (ui.section === "models" && JSON.stringify(old.catalogs) !== JSON.stringify(ui.view.catalogs)) {
+        if (!$("#main").contains(document.activeElement)) {
+          const selections = $$("#main select").map(el => [el.id,el.value]);
+          renderModels();
+          for (const [id,value] of selections) { const el = document.getElementById(id); if (el && Array.from(el.options).some(o=>o.value===value)) el.value=value; }
+        }
+      }
       const editor = $("#source-editor");
       if (editor) {
         editor.disabled = ui.view.busy;
@@ -567,16 +578,18 @@ function bindForm(onSubmit) {
   f.addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = $("button[type=submit]", f);
-    if (button) button.disabled = true;
+    const label = button?.textContent;
+    if (button) { button.disabled = true; button.textContent = button.dataset.busyLabel || "Working…"; }
     try {
       await onSubmit(new FormData(f));
+      if (!f.isConnected) return;
       ui.dialogDirty = false;
       $("#dialog").close();
       await renderMain();
     } catch (e) {
       report(e);
     } finally {
-      if (button) button.disabled = false;
+      if (button) { button.disabled = false; button.textContent = label; }
     }
   });
 }
@@ -746,7 +759,7 @@ function guidanceDialog() {
     )
       .map(([role, label]) => {
         const [id, origin] = resolvedModel(n.id, role);
-        return `<div class="field"><label for="role-${role}">${label}</label><select id="role-${role}" name="${role}">${modelOptions(n.models?.[role] || "", "Inherit", needsTools(role))}</select><small>Currently ${esc(c.models[id]?.name || id)} · from ${esc(origin)}</small></div>`;
+        return `<div class="field"><label for="role-${role}">${label}</label><select id="role-${role}" name="${role}">${modelOptions(n.models?.[role] || "", "Inherit", needsTools(role))}</select><small>Currently ${esc(c.models[id]?.name || id)} · from ${esc(origin)}</small>${inferenceFields("node-"+role,n.inference?.[role],c.models[id])}</div>`;
       })
       .join(
         "",
@@ -755,7 +768,8 @@ function guidanceDialog() {
   bindForm(async (f) => {
     n.replace_style = f.has("replace");
     n.models = {};
-    Object.keys(roles).forEach((r) => (n.models[r] = f.get(r)));
+    n.inference = {};
+    Object.keys(roles).forEach(r => { n.models[r] = f.get(r); n.inference[r] = readInference(f,"node-"+r); });
     await command("config", {
       config: c,
       expected: v.configVersion,
@@ -866,188 +880,87 @@ function instructions() {
 
 function renderModels() {
   const c = ui.view.config;
-  const models = Object.entries(c.models).filter(
-    ([, m]) => m.model || ui.view.demo,
-  );
-  $("#main").innerHTML =
-    `<div class="page-head"><div class="row spread"><h2>Models</h2><button class="primary" data-action="connect-model" data-write>Connect a model</button></div><p>Start with one model for everything. Add others only when you want different strengths.</p></div>${!configured() ? `<div class="card"><div class="subheading">START HERE</div><h3>Connect your writing model</h3><p class="muted">Enter your model server’s API URL. Iterauthor finds its models and checks the one you choose.</p><button class="primary" data-action="connect-model" data-write>Find models at an API URL</button></div>` : ""}${models.map(([id, m]) => `<article class="card"><div class="row spread"><div><h3>${esc(m.name || m.model)}</h3><p class="muted small">${esc(m.model || "Synthetic responses")}</p></div>${badge(id === c.base_model ? "Base model" : m.tools ? "All tasks" : "Writing tasks")}</div><p class="small muted"><code>${esc(m.url)}</code></p><div class="actions"><button data-connect="${esc(id)}" data-write>Change or test connection</button>${id !== c.base_model && m.tools ? `<button data-base="${esc(id)}" data-write>Use as base model</button>` : ""}</div></article>`).join("")}<div class="card"><div class="row spread"><h3>Models for individual tasks</h3><button data-action="feature-models" data-write>Change assignments</button></div><p class="muted small">Every task uses the base model unless you choose otherwise. Individual outlines can override these defaults.</p>${Object.entries(
-      roles,
-    )
-      .map(([role, label]) => {
-        const m = c.models[c.feature_models?.[role] || c.base_model];
-        return `<div class="list-row"><span>${label}</span><span class="muted small">${esc(m?.name || "Not configured")}${c.feature_models?.[role] ? "" : " · base"}</span></div>`;
-      })
-      .join("")}</div>`;
+  $("#main").innerHTML = `<div class="page-head"><div class="row spread"><h2>Models</h2><button class="primary" data-action="connect-model" data-write>Add API connection</button></div><p>Connect each API once. Its models appear in the menus throughout your project.</p></div>
+    <div class="card"><h3>Base model</h3><p class="muted small">Used for all tasks until you assign another model. Tool use is required; models with unreported capabilities can be tested in Model settings.</p><div class="row"><select id="base-model" aria-label="Base model">${modelOptions(c.base_model, "Choose a base model", true)}</select><button id="save-base" data-write>Use as base model</button></div></div>
+    ${Object.entries(c.connections || {}).map(([id, con]) => {
+      const state = ui.view.catalogs?.[id];
+      const list = Object.entries(c.models).filter(([,m]) => m.connection === id && m.model);
+      return `<article class="card"><div class="row spread"><h3>${esc(con.name)}</h3><span>${esc(con.provider || state?.catalog?.provider || "API")}</span></div><p class="small muted">${esc(con.url)}${con.key_env ? ` · authentication: ${esc(con.key_env)}` : " · no authentication"}</p><p class="small" role="status">${state?.refreshing ? "Refreshing model list…" : state?.error ? esc(state.error) : state?.updated ? `Last refreshed ${esc(new Date(state.updated).toLocaleTimeString())} · ${state.catalog.models.length} models` : "Waiting for the first model refresh…"}</p>${state?.error && state?.updated ? '<p class="small muted">Showing the last successful list. Saved assignments remain available.</p>' : ""}<div class="row"><select id="connection-model-${esc(id)}" aria-label="Models from ${esc(con.name)}">${list.length ? list.map(([ref,m]) => `<option value="${esc(ref)}">${esc(m.name || m.model)}${modelAvailability(m)}</option>`).join("") : '<option value="">No writing models listed</option>'}</select><button data-model-settings-from="${esc(id)}" ${list.length ? "" : "disabled"} data-write>Model settings</button></div><div class="actions"><button data-refresh-connection="${esc(id)}" ${state?.refreshing ? "disabled" : ""}>Refresh models</button><button data-connect="${esc(id)}" data-write>Edit connection</button></div></article>`;
+    }).join("")}
+    ${!Object.keys(c.connections || {}).length ? '<div class="empty">Add an API connection to discover its models.</div>' : ""}
+    <div class="card"><div class="row spread"><h3>Models for individual tasks</h3><button data-action="feature-models" data-write>Change assignments</button></div><p class="muted small">Each task can have its own model, reasoning setting, and output limit. Outline settings inherit and can override these choices.</p>${Object.entries(roles).map(([role,label]) => { const m = c.models[c.feature_models?.[role] || c.base_model]; return `<div class="list-row"><span>${label}</span><span class="muted small">${esc(m?.name || "Not configured")}${c.feature_models?.[role] ? "" : " · base"}</span></div>`; }).join("")}</div>`;
+  $("#save-base").onclick = async () => {
+    try {
+      const next = structuredClone(ui.view.config);
+      next.base_model = $("#base-model").value;
+      if (!next.base_model) throw new Error("Choose a base model first.");
+      await command("config", {config:next, expected:ui.view.configVersion, title:"Changed base model", target:next.root});
+      renderModels();
+    } catch(err) { report(err); }
+  };
   renderShell();
+}
+
+function modelAvailability(m) {
+  const state = ui.view.catalogs?.[m.connection];
+  if (state?.updated && !state.catalog.models.some(found => found.id === m.model)) return " · not currently listed";
+  return m.tools_unverified ? " · tools unverified" : !m.tools ? " · text only" : "";
 }
 
 function connectModel(id = "") {
   if (!requireSaved()) return;
-  const c = ui.view.config;
-  const existing = c.models[id] || {};
-  if (!id && !c.models[c.base_model]?.model) id = c.base_model;
-  ui.wizard = {
-    id,
-    version: ui.view.configVersion,
-    catalog: null,
-    selected: null,
-    result: null,
-    seq: 0,
-  };
-  showDialog(
-    "Connect a model",
-    `<div class="steps"><span><b>1</b>API URL</span><span><b>2</b>Choose a model</span><span><b>3</b>Test and save</span></div><form id="discover-form"><div class="field"><label for="api-url">Model server API URL</label><div class="row" style="flex-wrap:nowrap"><input id="api-url" name="url" type="text" required value="${esc(existing.url || "")}" placeholder="http://localhost:1234" autocomplete="url"><button type="submit" class="primary" id="discover-button">Discover models</button></div><small>Use an address reachable from the machine running Iterauthor. A server address or /v1 URL both work.</small></div><details><summary>Authentication (only if your server requires it)</summary><div class="field"><label for="api-key-env">API key environment variable</label><input id="api-key-env" value="${esc(existing.key_env || "")}" placeholder="OPENAI_API_KEY" autocomplete="off"><small>The key stays on the server. Leave this blank for a local endpoint without authentication.</small></div></details></form><div id="discovery-status" class="form-note"></div><div id="discovered-models"></div>`,
-  );
-  const wizard = ui.wizard;
-  const reset = () => {
-    wizard.seq++;
-    wizard.catalog = null;
-    wizard.result = null;
-    wizard.selected = null;
-    $("#discovered-models").innerHTML = "";
-    $("#discovery-status").textContent = "";
-  };
-  $("#api-url").addEventListener("input", reset);
-  $("#api-key-env").addEventListener("input", reset);
-  $("#discover-form").onsubmit = async (e) => {
-    e.preventDefault();
-    const seq = ++wizard.seq;
-    const button = $("#discover-button");
-    button.disabled = true;
-    $("#discovery-status").className = "form-note";
-    $("#discovery-status").textContent = "Looking for available models…";
-    try {
-      const catalog = await api("/api/models/discover", {
-        url: $("#api-url").value,
-        key_env: $("#api-key-env").value.trim(),
-      });
-      if (ui.wizard !== wizard || seq !== wizard.seq) return;
-      wizard.catalog = catalog;
-      wizard.result = null;
-      wizard.selected =
-        catalog.models.find((m) => m.id === existing.model) ||
-        catalog.models.find((m) => m.tools && !/embed/i.test(m.kind || "")) ||
-        catalog.models.find((m) => !/embed/i.test(m.kind || ""));
-      $("#discovery-status").textContent =
-        `${catalog.provider} · ${catalog.models.length} models found`;
-      renderDiscovered(existing);
-    } catch (err) {
-      if (ui.wizard === wizard && seq === wizard.seq) {
-        $("#discovery-status").textContent = err.message;
-        $("#discovery-status").className = "error-box";
-      }
-    } finally {
-      button.disabled = false;
-    }
-  };
+  const v = ui.view, existing = v.config.connections?.[id] || {};
+  showDialog(id ? "Edit API connection" : "Add API connection", `<form><div class="field"><label for="api-label">Connection name</label><input id="api-label" name="name" required placeholder="Office LM Studio" value="${esc(existing.name || "")}"></div><div class="field"><label for="api-url">API URL</label><input id="api-url" name="url" required placeholder="http://localhost:1234" value="${esc(existing.url || "")}"><small>Use an address reachable from the machine running Iterauthor.</small></div><div class="field"><label for="api-key-env">API key environment variable (optional)</label><input id="api-key-env" name="key_env" placeholder="OPENAI_API_KEY" value="${esc(existing.key_env || "")}" autocomplete="off"><small>Each connection can use its own account. The key stays on the server.</small></div><details><summary>API compatibility</summary><div class="field"><label for="api-provider">Server type</label><select id="api-provider" name="provider">${["", "LM Studio", "Ollama", "llama.cpp", "OpenAI", "Compatible API"].map(p => `<option value="${p}" ${existing.provider === p ? "selected" : ""}>${p || "Detect from API"}</option>`).join("")}</select><small>Choose llama.cpp explicitly to use its chat-template reasoning controls.</small></div></details><p class="muted small">Model lists refresh every minute and can be refreshed manually. Connecting only reads the catalog; it does not run the models.</p><div class="actions end"><button type="submit" class="primary" data-busy-label="Saving connection and refreshing…">Save connection and find models</button></div></form>`);
+  bindForm(async f => {
+    await command("save-connection", {id, expected:v.configVersion, api:{name:f.get("name").trim(),url:f.get("url").trim(),key_env:f.get("key_env").trim(),provider:f.get("provider")}});
+    renderModels();
+  });
 }
-function renderDiscovered(existing = {}) {
-  const w = ui.wizard;
-  if (!w?.catalog) return;
-  $("#discovered-models").innerHTML =
-    `<hr><p class="form-note">${esc(w.catalog.notice)}</p><div class="field"><label for="model-filter">Choose a model</label><input id="model-filter" placeholder="Filter models by name"></div><div id="model-choices" class="model-choice" aria-label="Available models"></div><div id="model-detail"></div>`;
-  const drawList = () => {
-    $("#model-choices").innerHTML = w.catalog.models
-      .filter(
-        (m) =>
-          m.name
-            .toLowerCase()
-            .includes($("#model-filter").value.toLowerCase()) ||
-          m.id.toLowerCase().includes($("#model-filter").value.toLowerCase()),
-      )
-      .map(
-        (m) =>
-          `<button data-model-id="${esc(m.id)}" class="${w.selected?.id === m.id ? "selected" : ""}" ${/embed/i.test(m.kind || "") ? "disabled" : ""}><span><strong>${esc(m.name)}</strong><small>${esc(m.id)}</small></span>${badge(/embed/i.test(m.kind || "") ? "Embeddings" : m.tools === true ? "Tools reported" : m.tools === false ? "Text model" : "Needs tool test")}</button>`,
-      )
-      .join("");
-    $$("[data-model-id]").forEach(
-      (button) =>
-        (button.onclick = () => {
-          w.selected = w.catalog.models.find(
-            (m) => m.id === button.dataset.modelId,
-          );
-          w.result = null;
-          w.seq++;
-          drawList();
-          drawDetail();
-        }),
-    );
+
+function reasoningOptions(selected = "", inherit = "Server default", model = null) {
+  let options = model?.reasoning_options?.length ? [...model.reasoning_options] : ["off", "on", "minimal", "low", "medium", "high", "xhigh"];
+  if (selected && !["default", ...options].includes(selected)) options.push(selected);
+  return `<option value="">${esc(inherit)}</option>` + (inherit !== "Server default" ? '<option value="default" '+(selected === "default" ? "selected" : "")+'>Server default</option>' : "") + options.map(value => `<option value="${esc(value)}" ${value === selected ? "selected" : ""}>${esc(value === "off" || value === "none" ? "Off" : value === "on" ? "On" : value[0].toUpperCase()+value.slice(1))}</option>`).join("");
+}
+
+function inferenceFields(prefix, values = {}, model = null) {
+  const mode = values.output_tokens === undefined ? "inherit" : values.output_tokens === 0 ? "unlimited" : "limited";
+  return `<div class="two-col"><div class="field"><label for="${prefix}-reasoning">Reasoning</label><select id="${prefix}-reasoning" name="${prefix}-reasoning">${reasoningOptions(values.reasoning || "", "Inherit", model)}</select></div><div class="field"><label for="${prefix}-output-mode">Output limit</label><select id="${prefix}-output-mode" name="${prefix}-output-mode" data-output-mode="${prefix}">${["inherit","unlimited","limited"].map(v => `<option value="${v}" ${mode === v ? "selected" : ""}>${v === "inherit" ? "Inherit" : v === "unlimited" ? "Unlimited (no app cap)" : "Custom limit"}</option>`).join("")}</select><input id="${prefix}-output-tokens" name="${prefix}-output-tokens" aria-label="Custom output tokens" type="number" min="64" max="1048576" value="${values.output_tokens || 16384}" ${mode === "limited" ? "" : "hidden disabled"}></div></div>`;
+}
+function readInference(f, prefix) {
+  const values = {}, mode = f.get(`${prefix}-output-mode`);
+  if (mode === "unlimited") values.output_tokens = 0;
+  if (mode === "limited") values.output_tokens = Number(f.get(`${prefix}-output-tokens`));
+  if (f.get(`${prefix}-reasoning`)) values.reasoning = f.get(`${prefix}-reasoning`);
+  return values;
+}
+
+function modelSettings(id) {
+  const v = ui.view, m = structuredClone(v.config.models[id]);
+  if (!m) return;
+  showDialog(`Model settings · ${m.name || m.model}`, `<form><p class="muted small">${esc(v.config.connections?.[m.connection]?.name || m.url)} · ${esc(m.model)}${m.context ? ` · reported context: ${m.context.toLocaleString()} tokens` : ""}</p><div class="field"><label for="model-name">Name in this project</label><input id="model-name" name="name" value="${esc(m.name || m.model)}" required></div>${inferenceFields("model", m, m)}<p class="muted small">Inherit uses the project output limit and the server’s default reasoning. Unlimited removes Iterauthor’s token cap; server limits still apply. Reasoning levels depend on the model. ${m.reasoning_options?.length ? "The listed reasoning options were reported by the server." : "This server does not report reasoning options; use its default unless you know which options the model supports."}</p><details><summary>Compatibility and tool support</summary><label class="check"><input name="tools" type="checkbox" ${m.tools ? "checked" : ""}>Allow use in tasks requiring tools</label><small>${m.tools_unverified ? "Tool capability has not been verified. The optional test checks a complete tool exchange." : "You can verify tool support with the optional test below."}</small><div class="field"><label for="token-field">Output limit parameter</label><select id="token-field" name="token_field"><option value="">API default</option>${["max_tokens","max_completion_tokens"].map(f => `<option ${m.token_field === f ? "selected" : ""}>${f}</option>`).join("")}</select></div><div class="field"><label for="reasoning-field">Reasoning parameter</label><select id="reasoning-field" name="reasoning_field"><option value="">API default</option><option value="reasoning_effort" ${m.reasoning_field === "reasoning_effort" ? "selected" : ""}>reasoning_effort</option><option value="chat_template_kwargs" ${m.reasoning_field === "chat_template_kwargs" ? "selected" : ""}>Chat template (llama.cpp / vLLM)</option></select></div></details><div id="probe-status" class="form-note" role="status"></div><div class="actions end"><button type="button" id="probe-model">Test model</button><button type="submit" class="primary">Save model settings</button></div></form>`);
+  let testResult;
+  const candidate = f => ({...m, name:f.get("name"), tools:f.has("tools"), token_field:f.get("token_field"), reasoning_field:f.get("reasoning_field"), reasoning:"", output_tokens:undefined, ...readInference(f,"model")});
+  $("#probe-model").onclick = async () => {
+    const button = $("#probe-model"), status = $("#probe-status");
+    button.disabled = true; status.textContent = "Testing text and a complete tool exchange…";
+    try {
+      const value = candidate(new FormData($("#dialog form")));
+      const result = await api("/api/models/probe", value);
+      if (!button.isConnected) return;
+      testResult = result;
+      status.textContent = result.detail;
+      $("#dialog [name=tools]").checked = result.tools;
+      $("#token-field").value = result.model.token_field;
+    } catch(err) { status.textContent = err.message; }
+    finally { button.disabled = false; await refresh(); }
   };
-  const drawDetail = () => {
-    const m = w.selected;
-    if (!m) {
-      $("#model-detail").innerHTML =
-        '<p class="muted">This server did not list a model for writing.</p>';
-      return;
-    }
-    $("#model-detail").innerHTML =
-      `<div class="metadata">${m.context ? `<span>Context: ${m.context.toLocaleString()} tokens</span>` : ""}${m.quantization ? `<span>${esc(m.quantization)}</span>` : ""}${m.loaded !== undefined ? `<span>${m.loaded ? "Loaded" : "Available to load"}</span>` : ""}${m.reasoning?.length ? `<span>Server reasoning options: ${esc(m.reasoning.join(", "))}</span>` : ""}</div><p class="form-note">The connection test uses up to four small model calls. Reported model options are shown above; server-side loading and reasoning settings keep their existing defaults.</p><div class="field"><label for="model-label">Name in this project</label><input id="model-label" value="${esc(existing.name || m.name)}"></div><label class="check"><input type="checkbox" id="as-base" ${!configured() || w.id === ui.view.config.base_model ? "checked" : ""}>Use as the base model for all tasks</label><div id="probe-status" class="form-note"></div><div class="actions end"><button id="probe-model">Test selected model</button><button id="save-model" class="primary" disabled>Save connection</button></div>`;
-    $("#probe-model").onclick = async () => {
-      const seq = ++w.seq,
-        button = $("#probe-model");
-      button.disabled = true;
-      $("#save-model").disabled = true;
-      $("#probe-status").textContent = "Testing text generation and tool use…";
-      const candidate = {
-        name: $("#model-label").value.trim() || m.name,
-        url: w.catalog.url,
-        model: m.id,
-        key_env: $("#api-key-env").value.trim(),
-        tools: true,
-      };
-      try {
-        const result = await api("/api/models/probe", candidate);
-        if (ui.wizard !== w || seq !== w.seq) return;
-        w.result = result;
-        $("#probe-status").textContent = result.detail;
-        $("#probe-status").className = result.tools ? "hint" : "error-box";
-        $("#save-model").disabled = !result.text;
-        $("#as-base").disabled = !result.tools;
-        if (!result.tools) $("#as-base").checked = false;
-        await refresh();
-      } catch (err) {
-        if (ui.wizard === w && seq === w.seq) {
-          $("#probe-status").textContent = err.message;
-          $("#probe-status").className = "error-box";
-        }
-      } finally {
-        button.disabled = false;
-      }
-    };
-    $("#save-model").onclick = async () => {
-      if (!w.result) return;
-      const button = $("#save-model");
-      button.disabled = true;
-      try {
-        const m = {
-          ...w.result.model,
-          name: $("#model-label").value.trim() || w.result.model.name,
-        };
-        await command("save-model", {
-          id:
-            !m.tools &&
-            w.id === ui.view.config.base_model &&
-            !ui.view.config.models[w.id]?.model
-              ? ""
-              : w.id,
-          connection: m,
-          base: $("#as-base").checked,
-          expected: w.version,
-        });
-        ui.dialogDirty = false;
-        ui.wizard = null;
-        $("#dialog").close();
-        renderModels();
-        notice("Connection saved. Task settings inherit from your base model.");
-      } catch (err) {
-        report(err);
-        button.disabled = false;
-      }
-    };
-  };
-  $("#model-filter").oninput = drawList;
-  drawList();
-  drawDetail();
+  bindForm(async f => {
+    const value = candidate(f);
+    if (testResult) value.tools_unverified = false;
+    await command("save-model", {id, connection:value, expected:v.configVersion});
+    renderModels();
+  });
 }
 
 function featureModels() {
@@ -1060,7 +973,7 @@ function featureModels() {
     )
       .map(
         ([role, label]) =>
-          `<div class="field"><label for="feature-${role}">${label}</label><select id="feature-${role}" name="${role}">${modelOptions(c.feature_models?.[role] || "", "Use base model", needsTools(role))}</select></div>`,
+          `<div class="field"><label for="feature-${role}">${label}</label><select id="feature-${role}" name="${role}">${modelOptions(c.feature_models?.[role] || "", "Use base model", needsTools(role))}</select>${inferenceFields("feature-"+role,c.feature_inference?.[role],c.models[c.feature_models?.[role] || c.base_model])}</div>`,
       )
       .join(
         "",
@@ -1068,7 +981,8 @@ function featureModels() {
   );
   bindForm(async (f) => {
     c.feature_models = {};
-    for (const role of Object.keys(roles)) c.feature_models[role] = f.get(role);
+    c.feature_inference = {};
+    for (const role of Object.keys(roles)) { c.feature_models[role] = f.get(role); c.feature_inference[role] = readInference(f,"feature-"+role); }
     await command("config", {
       config: c,
       expected: v.configVersion,
@@ -1084,8 +998,7 @@ function renderSettings() {
     `<div class="page-head"><h2>Project settings</h2><p>Limits and workflow preferences for ${esc(c.title)}.</p></div><div class="card"><h3>Generation limits</h3><p class="muted small">These limits cover drafting, context selection, tools, and reviews together.</p><form id="settings-form"><div class="two-col">${[
       ["drafts", "Draft attempts per passage", 1, 10],
       ["calls", "Model calls per queue", 1, 200],
-      ["minutes", "Minutes per queue", 1, 240],
-      ["output_tokens", "Output tokens per call", 64, 64000],
+      ["minutes", "Minutes per queue (0 = unlimited)", 0, 240],
       ["context_chars", "Input characters per call", 1000, 1000000],
     ]
       .map(
@@ -1094,7 +1007,7 @@ function renderSettings() {
       )
       .join(
         "",
-      )}</div><label class="check"><input name="automatic" type="checkbox" ${c.generate_after_editing ? "checked" : ""}>Draft missing or invalidated prose when I finish editing</label><div class="actions"><button type="submit" class="primary" data-write>Save settings</button><button type="button" data-action="finish-editing" data-write>Finish editing</button></div></form></div><div class="card"><h3>Project files</h3><p class="muted small"><code>${esc(ui.view.directory)}</code></p><p class="small muted">Your outlines and wiki remain Markdown files. Pause generation before external edits, then reload.</p><button data-action="reload" data-write>Reload project files</button></div>`;
+      )}</div><div class="field"><label for="project-output-mode">Output tokens per call</label><select id="project-output-mode" name="project-output-mode" data-output-mode="project"><option value="unlimited" ${c.limits.output_tokens === 0 ? "selected" : ""}>Unlimited (no app cap)</option><option value="limited" ${c.limits.output_tokens > 0 ? "selected" : ""}>Custom limit</option></select><input id="project-output-tokens" name="project-output-tokens" aria-label="Custom output tokens" type="number" min="64" max="1048576" value="${c.limits.output_tokens || 16384}" ${c.limits.output_tokens ? "" : "hidden disabled"}><small>Unlimited leaves output length to the model server. Server limits and context capacity still apply. Model and task settings can override this limit.</small></div><label class="check"><input name="automatic" type="checkbox" ${c.generate_after_editing ? "checked" : ""}>Draft missing or invalidated prose when I finish editing</label><div class="actions"><button type="submit" class="primary" data-write>Save settings</button><button type="button" data-action="finish-editing" data-write>Finish editing</button></div></form></div><div class="card"><h3>Project files</h3><p class="muted small"><code>${esc(ui.view.directory)}</code></p><p class="small muted">Your outlines and wiki remain Markdown files. Pause generation before external edits, then reload.</p><button data-action="reload" data-write>Reload project files</button></div>`;
   const form = $("#settings-form");
   form.dataset.version = ui.view.configVersion;
   form.addEventListener("input", () => (ui.settingsDirty = true));
@@ -1116,6 +1029,7 @@ async function saveSettings() {
     next = structuredClone(ui.view.config);
   for (const key of Object.keys(next.limits))
     next.limits[key] = Number(f.get(key));
+  next.limits.output_tokens = f.get("project-output-mode") === "unlimited" ? 0 : Number(f.get("project-output-tokens"));
   next.generate_after_editing = f.has("automatic");
   await command("config", {
     config: next,
@@ -1295,6 +1209,37 @@ async function sessions() {
   );
 }
 
+document.addEventListener("change", event => {
+  const select = event.target;
+  const match = /^(feature|role)-(knowledge|outline-context|outline|prose|consistency|style)$/.exec(select.id || "");
+  if (match) {
+    const role = match[2], prefix = (match[1] === "role" ? "node-" : "feature-") + role;
+    const inherited = match[1] === "role" ? resolvedModel(node()?.parent || "",role)[0] : ui.view.config.base_model;
+    const reasoning = $("#"+prefix+"-reasoning");
+    reasoning.innerHTML = reasoningOptions(reasoning.value,"Inherit",ui.view.config.models[select.value || inherited]);
+  }
+  const prefix = event.target.dataset.outputMode;
+  if (prefix) {
+    const input = $("#"+prefix+"-output-tokens"), limited = event.target.value === "limited";
+    input.hidden = !limited; input.disabled = !limited;
+  }
+});
+document.addEventListener("focusin", event => {
+  const select = event.target;
+  if (select.tagName !== "SELECT") return;
+  if (select.id.startsWith("connection-model-")) {
+    const connection = select.id.slice("connection-model-".length), value = select.value;
+    const models = Object.entries(ui.view.config.models).filter(([,m]) => m.connection === connection && m.model);
+    select.innerHTML = models.map(([id,m]) => `<option value="${esc(id)}">${esc(m.name || m.model)}${modelAvailability(m)}</option>`).join("") || '<option value="">No writing models listed</option>';
+    if (models.some(([id])=>id===value)) select.value = value;
+    return;
+  }
+  if (!select.querySelector("optgroup") && !["base-model","conversation-model","chat-model"].includes(select.id) && !/^(feature|role)-(knowledge|outline-context|outline|prose|consistency|style)$/.test(select.id)) return;
+  const selected = select.value, first = select.querySelector('option[value=""]');
+  const tools = ["base-model","conversation-model","chat-model"].includes(select.id) || /^(feature|role)-(knowledge|outline-context|consistency)$/.test(select.id);
+  select.innerHTML = modelOptions(selected, first?.textContent || "", tools);
+  if (Array.from(select.options).some(o=>o.value===selected)) select.value = selected;
+});
 document.addEventListener("click", async (event) => {
   const b = event.target.closest("button");
   if (!b || b.disabled) return;
@@ -1327,6 +1272,16 @@ document.addEventListener("click", async (event) => {
     }
     if (b.dataset.connect !== undefined) {
       connectModel(b.dataset.connect);
+      return;
+    }
+    if (b.dataset.refreshConnection) {
+      b.disabled = true;
+      try { await api("/api/connections/refresh", {id:b.dataset.refreshConnection}); }
+      finally { await refresh(); if (ui.section === "models") renderModels(); }
+      return;
+    }
+    if (b.dataset.modelSettingsFrom) {
+      modelSettings($("#connection-model-"+b.dataset.modelSettingsFrom).value);
       return;
     }
     if (b.dataset.base) {

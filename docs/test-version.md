@@ -42,7 +42,7 @@ All ancestor outline text is included conservatively. There is no separate pruni
 
 The writer produces a candidate, consistency reviews it using source tools, and style reviews it. Blocking findings go back to the writer. Each revision starts review again. Invalid/contradictory verdicts, missing explanations, truncation, timeouts, and exhausted budgets stop automatic acceptance. Preserved candidates can be explicitly chosen with findings.
 
-Defaults: three drafts per leaf, 24 total model calls per queue, 2,500 output tokens per call, 60,000 input characters per call, and 20 minutes per operation/queue. Selection, tool continuations, and revisions all count. Tool output is bounded; each response permits at most eight tool calls. Input budgeting counts serialized message characters, not exact tokenizer tokens. There is no pricing estimate or dollar cap.
+Defaults: three drafts per leaf, 24 total model calls per queue, no application output-token cap (server default), 60,000 input characters per call, and 20 minutes per operation/queue. Selection, tool continuations, and revisions all count. Tool output is bounded; each response permits at most eight tool calls. Input budgeting counts serialized message characters, not exact tokenizer tokens. There is no pricing estimate or dollar cap. Existing projects keep their saved limits. Output can be bounded per model, task, or outline; zero minutes permits unlimited operation time without disabling cancellation.
 
 Passing prose may replace prior generated prose. Manual prose requires explicit candidate selection. Invalidation preserves prior text and records. Working-manuscript exports mark incomplete or retained material.
 
@@ -70,7 +70,7 @@ Private notes are excluded from worker snapshots. Models have no arbitrary files
 - Leaf-to-parent conversion retains prose as an outline reference, a private note, or discards its active contribution. Outline reference keeps the text for refinement; no LLM summary is implied. Parent prose stops contributing to the manuscript.
 - Style supports inherited additions or replacement of the whole inherited style, without named-rule replacement. Operation prompts append down the tree.
 - Queues do not resume after restart. Completed calls/candidates are checkpointed; a call killed before returning cannot be recovered.
-- No streaming, native Anthropic/Responses inference adapters, web research, multi-process editing, or publication formatting. URL-driven discovery supports compatible model lists and optional LM Studio/Ollama metadata; server loading/reasoning settings are informational rather than editable. Compatible endpoints can differ in model behavior and options.
+- No streaming, native Anthropic/Responses inference adapters, web research, multi-process editing, or publication formatting. URL-driven discovery supports compatible model lists and optional LM Studio/Ollama metadata; model loading remains server-managed. Reasoning and output limits are configurable, with per-task and outline overrides. Compatible endpoints can differ in model behavior and options.
 - Browser and terminal interaction checks cover the main workflow. Accessibility, long authoring sessions, and actual iTerm/SSH forwarding to Debian still need trials.
 
 The experiment should measure whether an author can diagnose a poor passage, change a relevant source, and obtain a better draft without managing excessive configuration. That result should guide the next scheduler and interface work.

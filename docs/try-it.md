@@ -44,15 +44,17 @@ Reopen without `--demo`, or create a separate project:
 ~/iterauthor --new --title 'My novel' ~/my-novel
 ```
 
-Open **Models → Connect a model**, enter the API URL, and select **Discover models**. A server address, compatible API base, or model-list URL is accepted. Select a returned model, inspect available metadata, and run **Test selected model**. Save after the test completes.
+Open **Models → Add API connection**, enter a name and API URL, and save. A server address, compatible API base, or model-list URL is accepted. Choose a **Base model** from the connection's dropdown group. Other models from the same API are immediately available for task and outline assignments; you do not need a separate connection for each model.
 
-The adapter discovers compatible `/v1/models` lists. It also checks LM Studio's native model listings and Ollama's `/api/tags` when available. Reported fields can include context size, loaded state, quantization, tool training, and reasoning choices. Missing fields remain unknown. Reasoning choices are informational in this build; model loading and generation settings retain their server defaults.
+Model catalogs refresh every minute and when you use **Refresh models**. Discovery reads compatible `/v1/models` lists plus optional LM Studio/Ollama metadata. A failed refresh preserves the last successful list and shows its error. Models disappearing from a catalog remain in saved assignments; the app never chooses a replacement for you.
 
-The test makes at most four small inference calls: text, optional output-token parameter retry, a harmless tool call, and its continuation. This can load a local model and incurs ordinary inference charges for a paid endpoint. The app automatically selects `max_tokens` or `max_completion_tokens`; you do not configure that field manually. A successful text test with failed tool use permits writing-task assignments, but cannot become the base model.
+Choose a connection's model and open **Model settings** for reasoning, output limits, and the optional **Test model**. Tests make at most four inference calls and have a five-minute deadline; they may load models or incur provider charges. The test can negotiate the output-token field and verify a full tool exchange. It is not required just to connect an API. For models with unknown tool capability, an explicit unverified label stays visible until testing.
+
+Reasoning and output limits inherit from model settings through task defaults and outline ancestors. **Unlimited (no app cap)** omits the request's output-limit parameter; server limits still apply. New projects use it by default; old limits stay as saved. In **Project settings**, set minutes to zero to remove the operation time limit. Stop remains available, and model-call/draft limits still bound the loop.
 
 Addresses are resolved **from Debian**, so its `127.0.0.1` refers to Debian. For a model server on your Mac or LAN, use an address reachable from Debian or another SSH tunnel. Common server addresses are `http://YOUR-MODEL-HOST:1234` for LM Studio, `http://YOUR-MODEL-HOST:11434` for Ollama, or the actual listen address of your llama.cpp server. Hosted providers require their compatible API base URL.
 
-Expand **Authentication** only when required. Enter the name of an environment variable already set for the Iterauthor process, rather than the secret. The application does not read `.env` files or use ChatGPT account login. There is no silent fallback to demo output.
+Use the optional API-key environment-variable field when authentication is required. Enter the name of an environment variable already set for the Iterauthor process, rather than the secret. The application does not read `.env` files or use ChatGPT account login. There is no silent fallback to demo output.
 
 Start with one tool-capable base model. Add further connections and use **Change assignments** for task defaults. **Style → Change inheritance or model choices** overrides assignments for an outline and descendants. Selection, consistency, and interactive conversations require tool use; outlining, prose, and style accept text-only models.
 

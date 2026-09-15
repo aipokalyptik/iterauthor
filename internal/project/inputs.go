@@ -15,12 +15,15 @@ const generationKey = "@generation"
 func writingConfigHash(c Config) string {
 	w := c.Clone()
 	w.Limits = Limits{}
+	w.Connections = nil
+	w.Inference = nil
 	w.AutoGenerate = false
 	w.BaseModel = ""
 	w.Defaults = nil
 	w.Models = map[string]Model{}
 	for id, n := range w.Nodes {
 		n.Models = map[string]string{}
+		n.Inference = nil
 		for _, role := range Roles {
 			modelID, _ := c.ResolveModel(id, role)
 			n.Models[role] = modelID

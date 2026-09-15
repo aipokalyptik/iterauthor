@@ -43,7 +43,7 @@ The service is an in-process Go API, not an HTTP API. Its inputs and returned va
 | Edit sources and settings | `BeginEditing`, `SaveText`, `SaveConfig`, `AddChild`, `AddEntry`, `FinishEditing` |
 | Reconcile external editing | `PrepareExternalEdit`, `Reload` |
 | Generate passages | `Generate(Selection, force)` with branch, selected passages, or story scope |
-| Discover and configure model connections | `DiscoverModels`, `ProbeModel`, `SaveModel` |
+| Discover and configure model connections | `SaveConnection`, `RefreshConnection`, `RunModelRefresh`, `DiscoverModels`, `ProbeModel`, `SaveModel` |
 | Generate outline detail or test tools | `Start(Job)` |
 | Work with the assistant | `NewConversation`, `SetConversationModel`, `Send`, `SaveDraft` |
 | Apply or invalidate generated work | `UseCandidate`, `ImportOutline`, `ApplyEdits`, `Invalidate`, `InvalidateRun` |
@@ -109,3 +109,13 @@ The current single-process project lock, global editing pause, non-resumable que
 ## Evidence
 
 Headless application tests exercise unattended queues, an unresponsive subscriber, shared budgets, author-prose protection, cancellation/shutdown locking, conversation persistence, stale saves, scoped proposal validation, outline import/invalidation, automatic generation, project switching and subscription cleanup. Terminal tests separately cover navigation and editing, detached-worker completion, completion dialogs, and preserving unsent conversation text during cancel-and-quit.
+
+## API connections and inference options
+
+`Config.Connections` stores named API addresses and credential environment references. Models retain stable IDs and point to a connection; old inline endpoints are grouped in the service view without rewriting source files on open. A catalog refresh is a read-only network operation followed by an atomic metadata-cache write to `.twriter/catalogs.json`. It can run during generation without source locks, configuration-version changes, or invalidation. Stale responses from an edited connection or switched project are discarded. The application host runs the one-minute refresh loop, independent of browser tabs.
+
+Service views merge saved model definitions with the current catalog. Selecting a new catalog model freezes its definition before a job or conversation can reference it. Model IDs include the connection identity, so identical names at different APIs/accounts do not collide. Missing models and offline APIs keep their saved assignments; no fallback is selected. Worker snapshots resolve connection addresses and freeze catalog metadata at admission.
+
+`InferenceFor` resolves output and reasoning settings in order: project output limit, model defaults, feature overrides, and ancestor-to-leaf overrides. A nil output pointer inherits; zero omits the app's output cap. Empty reasoning inherits; `default` explicitly restores provider defaults. Inference settings apply to future runs and do not demand prose review. Effective options are recorded on each model-call trace. Provider usage details remain optional because not every compatible API reports input, completion, or reasoning tokens separately.
+
+Reasoning uses `reasoning_effort` for compatible APIs, translating off/on to none/medium. llama.cpp or an explicit chat-template mode uses `chat_template_kwargs`. Model-reported reasoning options are checked before sending; there is no silent setting downgrade. Compatibility depends on the server/model implementation, and a successful request alone cannot prove a server honored a reasoning control. Unlimited output omits the token field; it does not promise an unlimited server context or override server defaults. The operation deadline (zero means none), model-call limit, and draft-attempt limit are independent controls.

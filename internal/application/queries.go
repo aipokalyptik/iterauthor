@@ -15,7 +15,7 @@ func (s *Service) Read(id, field string) (string, error) {
 	return read(s, func(p *project.Store) (string, error) { return p.Read(id, field) })
 }
 func (s *Service) Snapshot() (project.Snapshot, error) {
-	return read(s, func(p *project.Store) (project.Snapshot, error) { return p.Snapshot() })
+	return read(s, func(p *project.Store) (project.Snapshot, error) { return s.snapshot() })
 }
 func (s *Service) Runs() ([]project.Run, error) {
 	return read(s, func(p *project.Store) ([]project.Run, error) { return p.Runs() })

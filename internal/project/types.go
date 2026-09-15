@@ -19,12 +19,20 @@ var RoleNames = map[string]string{
 }
 
 type Model struct {
-	Name       string `json:"name"`
-	URL        string `json:"url"`
-	Model      string `json:"model"`
-	KeyEnv     string `json:"key_env,omitempty"`
-	Tools      bool   `json:"tools"`
-	TokenField string `json:"token_field,omitempty"`
+	Connection       string   `json:"connection,omitempty"`
+	Provider         string   `json:"provider,omitempty"`
+	Reasoning        string   `json:"reasoning,omitempty"`
+	ReasoningField   string   `json:"reasoning_field,omitempty"`
+	OutputTokens     *int     `json:"output_tokens,omitempty"`
+	Context          int      `json:"context,omitempty"`
+	ReasoningOptions []string `json:"reasoning_options,omitempty"`
+	ToolsUnverified  bool     `json:"tools_unverified,omitempty"`
+	Name             string   `json:"name"`
+	URL              string   `json:"url"`
+	Model            string   `json:"model"`
+	KeyEnv           string   `json:"key_env,omitempty"`
+	Tools            bool     `json:"tools"`
+	TokenField       string   `json:"token_field,omitempty"`
 }
 
 type Limits struct {
@@ -36,7 +44,7 @@ type Limits struct {
 }
 
 func DefaultLimits() Limits {
-	return Limits{Drafts: 3, Calls: 24, OutputTokens: 2500, ContextChars: 60000, Minutes: 20}
+	return Limits{Drafts: 3, Calls: 24, OutputTokens: 0, ContextChars: 60000, Minutes: 20}
 }
 
 type Attachment struct {
@@ -45,16 +53,17 @@ type Attachment struct {
 }
 
 type Node struct {
-	ID            string            `json:"id"`
-	Title         string            `json:"title"`
-	Parent        string            `json:"parent,omitempty"`
-	Children      []string          `json:"children,omitempty"`
-	Models        map[string]string `json:"models,omitempty"`
-	Prompts       map[string]string `json:"prompts,omitempty"`
-	AutoKnowledge *bool             `json:"auto_knowledge,omitempty"`
-	AutoOutline   *bool             `json:"auto_outline,omitempty"`
-	Attachments   []Attachment      `json:"attachments,omitempty"`
-	ReplaceStyle  bool              `json:"replace_style,omitempty"`
+	Inference     map[string]Inference `json:"inference,omitempty"`
+	ID            string               `json:"id"`
+	Title         string               `json:"title"`
+	Parent        string               `json:"parent,omitempty"`
+	Children      []string             `json:"children,omitempty"`
+	Models        map[string]string    `json:"models,omitempty"`
+	Prompts       map[string]string    `json:"prompts,omitempty"`
+	AutoKnowledge *bool                `json:"auto_knowledge,omitempty"`
+	AutoOutline   *bool                `json:"auto_outline,omitempty"`
+	Attachments   []Attachment         `json:"attachments,omitempty"`
+	ReplaceStyle  bool                 `json:"replace_style,omitempty"`
 }
 
 type Entry struct {
@@ -64,16 +73,18 @@ type Entry struct {
 }
 
 type Config struct {
-	Schema       int               `json:"schema"`
-	Title        string            `json:"title"`
-	Root         string            `json:"root"`
-	Nodes        map[string]*Node  `json:"nodes"`
-	Knowledge    map[string]*Entry `json:"knowledge"`
-	Models       map[string]Model  `json:"models"`
-	BaseModel    string            `json:"base_model"`
-	Defaults     map[string]string `json:"feature_models,omitempty"`
-	Limits       Limits            `json:"limits"`
-	AutoGenerate bool              `json:"generate_after_editing"`
+	Connections  map[string]Connection `json:"connections,omitempty"`
+	Inference    map[string]Inference  `json:"feature_inference,omitempty"`
+	Schema       int                   `json:"schema"`
+	Title        string                `json:"title"`
+	Root         string                `json:"root"`
+	Nodes        map[string]*Node      `json:"nodes"`
+	Knowledge    map[string]*Entry     `json:"knowledge"`
+	Models       map[string]Model      `json:"models"`
+	BaseModel    string                `json:"base_model"`
+	Defaults     map[string]string     `json:"feature_models,omitempty"`
+	Limits       Limits                `json:"limits"`
+	AutoGenerate bool                  `json:"generate_after_editing"`
 }
 
 type Change struct {
@@ -315,8 +326,40 @@ func (c Config) Validate() error {
 			return fmt.Errorf("%s requires tools", RoleNames[role])
 		}
 	}
+	for id, con := range c.Connections {
+		if !ValidID(id) || con.URL == "" || con.Name == "" {
+			return fmt.Errorf("invalid API connection %q", id)
+		}
+	}
+	for id, m := range c.Models {
+		if m.Connection != "" {
+			if _, ok := c.Connections[m.Connection]; !ok {
+				return fmt.Errorf("model %s references a missing API connection", id)
+			}
+		}
+		if err := (Inference{OutputTokens: m.OutputTokens, Reasoning: m.Reasoning}).Validate(); err != nil {
+			return err
+		}
+		switch m.ReasoningField {
+		case "", "reasoning_effort", "chat_template_kwargs":
+		default:
+			return fmt.Errorf("unknown reasoning transport")
+		}
+	}
+	for _, options := range c.Inference {
+		if err := options.Validate(); err != nil {
+			return err
+		}
+	}
+	for _, node := range c.Nodes {
+		for _, options := range node.Inference {
+			if err := options.Validate(); err != nil {
+				return err
+			}
+		}
+	}
 	l := c.Limits
-	if l.Drafts < 1 || l.Drafts > 10 || l.Calls < 1 || l.Calls > 200 || l.OutputTokens < 64 || l.OutputTokens > 64000 || l.ContextChars < 1000 || l.ContextChars > 1000000 || l.Minutes < 1 || l.Minutes > 240 {
+	if l.Drafts < 1 || l.Drafts > 10 || l.Calls < 1 || l.Calls > 200 || !ValidOutputTokens(l.OutputTokens) || l.ContextChars < 1000 || l.ContextChars > 1000000 || l.Minutes < 0 || l.Minutes > 240 {
 		return fmt.Errorf("invalid generation limits")
 	}
 	return nil

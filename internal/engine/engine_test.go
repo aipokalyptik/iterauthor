@@ -190,3 +190,52 @@ func TestCancellationRetainsCompletedDraft(t *testing.T) {
 		t.Fatal("cancel lost completed draft")
 	}
 }
+
+func TestGenerationUsesInheritedInferenceForEachStage(t *testing.T) {
+	_, snapshot := source(t)
+	snapshot.Config.Nodes["visit"].Attachments = nil
+	snapshot.Config.Connections = map[string]project.Connection{"local": {Name: "Local", URL: "http://resolved/v1", Provider: "llama.cpp"}}
+	snapshot.Config.Models["base"] = project.Model{Connection: "local", URL: "http://outdated/v1", Model: "writer", Tools: true, Reasoning: "low"}
+	zero, cap := 0, 8192
+	snapshot.Config.Limits.Minutes = 0
+	snapshot.Config.Inference = map[string]project.Inference{"style": {Reasoning: "off", OutputTokens: &cap}}
+	snapshot.Config.Nodes["story"].Inference = map[string]project.Inference{"prose": {Reasoning: "high", OutputTokens: &cap}}
+	snapshot.Config.Nodes["visit"].Inference = map[string]project.Inference{"prose": {OutputTokens: &zero}}
+	stages := map[string]int{}
+	client := fake(func(ctx context.Context, m project.Model, messages []model.Message, tools []model.Tool, tokens int) (model.Response, error) {
+		if m.URL != "http://resolved/v1" || m.Provider != "llama.cpp" {
+			t.Error("connection not resolved at inference")
+		}
+		if _, deadline := ctx.Deadline(); deadline {
+			t.Error("unlimited operation has an implicit deadline")
+		}
+		stage := "other"
+		switch {
+		case strings.Contains(messages[0].Content, "WRITE PROSE"):
+			stage = "prose"
+			if m.Reasoning != "high" || tokens != 0 {
+				t.Error("prose did not use leaf unlimited and ancestor reasoning")
+			}
+		case strings.Contains(messages[0].Content, "REVIEW: style"):
+			stage = "style"
+			if m.Reasoning != "off" || tokens != cap {
+				t.Error("style override not applied")
+			}
+		default:
+			if m.Reasoning != "low" || tokens != 0 {
+				t.Error("unrelated stage inherited prose settings")
+			}
+		}
+		stages[stage]++
+		return (model.Demo{}).Complete(ctx, m, messages, tools, tokens)
+	})
+	run := (Engine{Client: client}).Run(context.Background(), snapshot, "visit", "prose", "", "", nil)
+	if run.Error != "" || stages["prose"] == 0 || stages["style"] == 0 || stages["other"] == 0 {
+		t.Fatalf("pipeline failed: %s, stages %v", run.Error, stages)
+	}
+	for _, trace := range run.Trace {
+		if trace.Request != nil && trace.Tool == "" && trace.Options == nil {
+			t.Error("resolved inference options missing from trace")
+		}
+	}
+}

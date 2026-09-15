@@ -81,6 +81,9 @@ func run() (err error) {
 		defer cancel()
 		err = errors.Join(err, core.Shutdown(ctx))
 	}()
+	refreshCtx, stopRefresh := context.WithCancel(context.Background())
+	defer stopRefresh()
+	go core.RunModelRefresh(refreshCtx)
 	if *terminal {
 		return tui.New(core).Run()
 	}
