@@ -1,9 +1,6 @@
 package model
 
 import (
-	"fmt"
-	"slices"
-
 	"github.com/aipokalyptik/iterauthor/internal/project"
 )
 
@@ -12,9 +9,10 @@ func ApplyReasoning(payload map[string]any, m project.Model) error {
 	if value == "" || value == "default" {
 		return nil
 	}
-	if err := (project.Inference{Reasoning: value}).Validate(); err != nil {
+	if err := m.ValidateReasoning(value); err != nil {
 		return err
 	}
+
 	normalize := func(s string) string {
 		if s == "off" {
 			return "none"
@@ -24,9 +22,7 @@ func ApplyReasoning(payload map[string]any, m project.Model) error {
 		}
 		return s
 	}
-	if len(m.ReasoningOptions) > 0 && !slices.ContainsFunc(m.ReasoningOptions, func(s string) bool { return normalize(s) == normalize(value) }) {
-		return fmt.Errorf("%s does not report support for reasoning %s; choose a supported option in Model settings", m.Name, value)
-	}
+
 	if m.ReasoningField == "chat_template_kwargs" || (m.ReasoningField == "" && m.Provider == "llama.cpp") {
 		kwargs := map[string]any{}
 		switch value {

@@ -42,9 +42,10 @@ type Definition struct {
 	Parameters  map[string]any `json:"parameters"`
 }
 type Response struct {
-	InputTokens     *int `json:"input_tokens,omitempty"`
-	OutputTokens    *int `json:"output_tokens,omitempty"`
-	ReasoningTokens *int `json:"reasoning_tokens,omitempty"`
+	Budget          *Budget `json:"budget,omitempty"`
+	InputTokens     *int    `json:"input_tokens,omitempty"`
+	OutputTokens    *int    `json:"output_tokens,omitempty"`
+	ReasoningTokens *int    `json:"reasoning_tokens,omitempty"`
 	Message         Message
 	Tokens          int
 	Finish          string
@@ -83,9 +84,13 @@ func (h *HTTP) Complete(ctx context.Context, m project.Model, messages []Message
 	if field != "max_tokens" && field != "max_completion_tokens" {
 		return result, fmt.Errorf("token field must be max_tokens or max_completion_tokens")
 	}
-	if maxTokens < 0 {
-		return result, fmt.Errorf("output-token limit cannot be negative")
+	budget, err := PlanOutput("", m, messages, tools, maxTokens)
+	result.Budget = &budget
+	if err != nil {
+		return result, err
 	}
+	maxTokens = budget.OutputTokens
+
 	if maxTokens > 0 {
 		payload[field] = maxTokens
 	}
@@ -166,7 +171,7 @@ func (h *HTTP) Complete(ctx context.Context, m project.Model, messages []Message
 		return result, fmt.Errorf("model response contained no choices")
 	}
 	c := envelope.Choices[0]
-	result = Response{Tokens: envelope.Usage.Tokens, Finish: c.Finish, InputTokens: envelope.Usage.Input, OutputTokens: envelope.Usage.Output, ReasoningTokens: envelope.Usage.Details.Reasoning}
+	result = Response{Budget: &budget, Tokens: envelope.Usage.Tokens, Finish: c.Finish, InputTokens: envelope.Usage.Input, OutputTokens: envelope.Usage.Output, ReasoningTokens: envelope.Usage.Details.Reasoning}
 	if c.Message.Refusal != "" {
 		return result, fmt.Errorf("model refused: %s", c.Message.Refusal)
 	}
@@ -183,7 +188,23 @@ func (h *HTTP) Complete(ctx context.Context, m project.Model, messages []Message
 		}
 		return result, fmt.Errorf("model output reached its token limit; partial output retained; increase output_tokens or narrow the task")
 	}
-	if content == "" && len(c.Message.ToolCalls) == 0 {
+	if c.Finish == "content_filter" {
+		return result, fmt.Errorf("model output was blocked by the provider's content filter; partial output retained")
+	}
+	if c.Finish != "" && c.Finish != "stop" && c.Finish != "tool_calls" {
+		return result, fmt.Errorf("model ended with unsupported finish reason %q; inspect the retained response", c.Finish)
+	}
+	if (m.Reasoning == "off" || m.Reasoning == "none") && ((result.ReasoningTokens != nil && *result.ReasoningTokens > 0) || strings.TrimSpace(c.Message.ReasoningContent) != "") {
+		return result, fmt.Errorf("the model produced reasoning although reasoning is Off; this server/model did not honor the selected reasoning control; check Model settings and the server")
+	}
+	seen := map[string]bool{}
+	for _, call := range c.Message.ToolCalls {
+		if call.ID == "" || seen[call.ID] || call.Type != "function" || call.Function.Name == "" || !json.Valid([]byte(call.Function.Arguments)) {
+			return result, fmt.Errorf("model returned an invalid or duplicate tool call; inspect the retained response")
+		}
+		seen[call.ID] = true
+	}
+	if strings.TrimSpace(content) == "" && len(c.Message.ToolCalls) == 0 {
 		return result, fmt.Errorf("model returned empty text and no tool calls")
 	}
 	return result, nil

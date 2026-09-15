@@ -138,10 +138,10 @@ function modelOptions(selected = "", inherit = "", tools = false) {
   const c = ui.view.config, groups = new Map();
   let html = inherit ? `<option value="">${esc(inherit)}</option>` : "";
   for (const [id,m] of Object.entries(c.models)) {
-    if (!(m.model || ui.view.demo) || (tools && !m.tools && id !== selected)) continue;
+    if (!(m.model || ui.view.demo) || (tools && (!m.tools || m.tools_unverified) && id !== selected)) continue;
     const group = m.connection || "";
     if (!groups.has(group)) groups.set(group, []);
-    groups.get(group).push(`<option value="${esc(id)}" ${id === selected ? "selected" : ""} ${tools && !m.tools ? "disabled" : ""}>${esc(m.name || m.model)}${modelAvailability(m)}</option>`);
+    groups.get(group).push(`<option value="${esc(id)}" ${id === selected ? "selected" : ""} ${tools && (!m.tools || m.tools_unverified) ? "disabled" : ""}>${esc(m.name || m.model)}${modelAvailability(m)}</option>`);
   }
   for (const [group, options] of groups) html += `<optgroup label="${esc(c.connections?.[group]?.name || "Saved models")}">${options.join("")}</optgroup>`;
   return html;
@@ -223,6 +223,12 @@ async function refresh() {
       )
         await renderMain();
       if (ui.section === "models" && JSON.stringify(old.catalogs) !== JSON.stringify(ui.view.catalogs)) {
+        for (const [id,state] of Object.entries(ui.view.catalogs || {})) {
+          const status = document.getElementById("catalog-status-"+id);
+          if (status) status.textContent = catalogStatus(state);
+          const button = $("[data-refresh-connection='"+id+"']");
+          if (button) button.disabled = state.refreshing;
+        }
         if (!$("#main").contains(document.activeElement)) {
           const selections = $$("#main select").map(el => [el.id,el.value]);
           renderModels();
@@ -878,14 +884,20 @@ function instructions() {
   });
 }
 
+function catalogStatus(state) {
+  if (state?.refreshing) return "Refreshing model list…";
+  if (state?.error) return state.error + (state.updated ? " · keeping the last successful list" : "");
+  return state?.updated ? `Last refreshed ${new Date(state.updated).toLocaleTimeString()} · ${state.catalog.models.length} models` : "Waiting for the first model refresh…";
+}
+
 function renderModels() {
   const c = ui.view.config;
   $("#main").innerHTML = `<div class="page-head"><div class="row spread"><h2>Models</h2><button class="primary" data-action="connect-model" data-write>Add API connection</button></div><p>Connect each API once. Its models appear in the menus throughout your project.</p></div>
-    <div class="card"><h3>Base model</h3><p class="muted small">Used for all tasks until you assign another model. Tool use is required; models with unreported capabilities can be tested in Model settings.</p><div class="row"><select id="base-model" aria-label="Base model">${modelOptions(c.base_model, "Choose a base model", true)}</select><button id="save-base" data-write>Use as base model</button></div></div>
+    <div class="card"><h3>Base model</h3><p class="muted small">Used for all tasks until you assign another model. Tool use is required. If a model is missing here, open its Model settings below to test or explicitly enable tools.</p><div class="row"><select id="base-model" aria-label="Base model">${modelOptions(c.base_model, "Choose a base model", true)}</select><button id="save-base" data-write>Use as base model</button></div></div>
     ${Object.entries(c.connections || {}).map(([id, con]) => {
       const state = ui.view.catalogs?.[id];
       const list = Object.entries(c.models).filter(([,m]) => m.connection === id && m.model);
-      return `<article class="card"><div class="row spread"><h3>${esc(con.name)}</h3><span>${esc(con.provider || state?.catalog?.provider || "API")}</span></div><p class="small muted">${esc(con.url)}${con.key_env ? ` · authentication: ${esc(con.key_env)}` : " · no authentication"}</p><p class="small" role="status">${state?.refreshing ? "Refreshing model list…" : state?.error ? esc(state.error) : state?.updated ? `Last refreshed ${esc(new Date(state.updated).toLocaleTimeString())} · ${state.catalog.models.length} models` : "Waiting for the first model refresh…"}</p>${state?.error && state?.updated ? '<p class="small muted">Showing the last successful list. Saved assignments remain available.</p>' : ""}<div class="row"><select id="connection-model-${esc(id)}" aria-label="Models from ${esc(con.name)}">${list.length ? list.map(([ref,m]) => `<option value="${esc(ref)}">${esc(m.name || m.model)}${modelAvailability(m)}</option>`).join("") : '<option value="">No writing models listed</option>'}</select><button data-model-settings-from="${esc(id)}" ${list.length ? "" : "disabled"} data-write>Model settings</button></div><div class="actions"><button data-refresh-connection="${esc(id)}" ${state?.refreshing ? "disabled" : ""}>Refresh models</button><button data-connect="${esc(id)}" data-write>Edit connection</button></div></article>`;
+      return `<article class="card"><div class="row spread"><h3>${esc(con.name)}</h3><span>${esc(con.provider || state?.catalog?.provider || "API")}</span></div><p class="small muted">${esc(con.url)}${con.key_env ? ` · authentication: ${esc(con.key_env)}` : " · no authentication"}</p><p class="small" role="status" id="catalog-status-${esc(id)}">${esc(catalogStatus(state))}</p>${state?.error && state?.updated ? '<p class="small muted">Showing the last successful list. Saved assignments remain available.</p>' : ""}<div class="row"><select id="connection-model-${esc(id)}" aria-label="Models from ${esc(con.name)}">${list.length ? list.map(([ref,m]) => `<option value="${esc(ref)}">${esc(m.name || m.model)}${modelAvailability(m)}</option>`).join("") : '<option value="">No writing models listed</option>'}</select><button data-model-settings-from="${esc(id)}" ${list.length ? "" : "disabled"} data-write>Model settings</button></div><div class="actions"><button data-refresh-connection="${esc(id)}" ${state?.refreshing ? "disabled" : ""}>Refresh models</button><button data-connect="${esc(id)}" data-write>Edit connection</button></div></article>`;
     }).join("")}
     ${!Object.keys(c.connections || {}).length ? '<div class="empty">Add an API connection to discover its models.</div>' : ""}
     <div class="card"><div class="row spread"><h3>Models for individual tasks</h3><button data-action="feature-models" data-write>Change assignments</button></div><p class="muted small">Each task can have its own model, reasoning setting, and output limit. Outline settings inherit and can override these choices.</p>${Object.entries(roles).map(([role,label]) => { const m = c.models[c.feature_models?.[role] || c.base_model]; return `<div class="list-row"><span>${label}</span><span class="muted small">${esc(m?.name || "Not configured")}${c.feature_models?.[role] ? "" : " · base"}</span></div>`; }).join("")}</div>`;
@@ -904,13 +916,13 @@ function renderModels() {
 function modelAvailability(m) {
   const state = ui.view.catalogs?.[m.connection];
   if (state?.updated && !state.catalog.models.some(found => found.id === m.model)) return " · not currently listed";
-  return m.tools_unverified ? " · tools unverified" : !m.tools ? " · text only" : "";
+  return m.tools_unverified ? " · test tools to use as base" : !m.tools ? " · text only" : "";
 }
 
 function connectModel(id = "") {
   if (!requireSaved()) return;
   const v = ui.view, existing = v.config.connections?.[id] || {};
-  showDialog(id ? "Edit API connection" : "Add API connection", `<form><div class="field"><label for="api-label">Connection name</label><input id="api-label" name="name" required placeholder="Office LM Studio" value="${esc(existing.name || "")}"></div><div class="field"><label for="api-url">API URL</label><input id="api-url" name="url" required placeholder="http://localhost:1234" value="${esc(existing.url || "")}"><small>Use an address reachable from the machine running Iterauthor.</small></div><div class="field"><label for="api-key-env">API key environment variable (optional)</label><input id="api-key-env" name="key_env" placeholder="OPENAI_API_KEY" value="${esc(existing.key_env || "")}" autocomplete="off"><small>Each connection can use its own account. The key stays on the server.</small></div><details><summary>API compatibility</summary><div class="field"><label for="api-provider">Server type</label><select id="api-provider" name="provider">${["", "LM Studio", "Ollama", "llama.cpp", "OpenAI", "Compatible API"].map(p => `<option value="${p}" ${existing.provider === p ? "selected" : ""}>${p || "Detect from API"}</option>`).join("")}</select><small>Choose llama.cpp explicitly to use its chat-template reasoning controls.</small></div></details><p class="muted small">Model lists refresh every minute and can be refreshed manually. Connecting only reads the catalog; it does not run the models.</p><div class="actions end"><button type="submit" class="primary" data-busy-label="Saving connection and refreshing…">Save connection and find models</button></div></form>`);
+  showDialog(id ? "Edit API connection" : "Add API connection", `<form><div class="field"><label for="api-label">Connection name</label><input id="api-label" name="name" required placeholder="Office LM Studio" value="${esc(existing.name || "")}"></div><div class="field"><label for="api-url">API URL</label><input id="api-url" name="url" required placeholder="http://localhost:1234" value="${esc(existing.url || "")}"><small>Use an address reachable from the machine running Iterauthor.</small></div><div class="field"><label for="api-key-env">API key environment variable (optional)</label><input id="api-key-env" name="key_env" placeholder="OPENAI_API_KEY" value="${esc(existing.key_env || "")}" autocomplete="off"><small>Each connection can use its own account. The key stays on the server.</small></div><details><summary>API compatibility</summary><div class="field"><label for="api-provider">Server type</label><select id="api-provider" name="provider">${["", "LM Studio", "Ollama", "llama.cpp", "OpenAI", "Compatible API"].map(p => `<option value="${p}" ${existing.provider === p ? "selected" : ""}>${p || "Detect from API"}</option>`).join("")}</select><small>Detection reads model metadata. Override this only when your proxy hides the server type.</small></div></details><p class="muted small">Model lists refresh every minute and can be refreshed manually. Connecting only reads the catalog; it does not run the models.</p><div class="actions end"><button type="submit" class="primary" data-busy-label="Saving connection and refreshing…">Save connection and find models</button></div></form>`);
   bindForm(async f => {
     await command("save-connection", {id, expected:v.configVersion, api:{name:f.get("name").trim(),url:f.get("url").trim(),key_env:f.get("key_env").trim(),provider:f.get("provider")}});
     renderModels();
@@ -924,12 +936,13 @@ function reasoningOptions(selected = "", inherit = "Server default", model = nul
 }
 
 function inferenceFields(prefix, values = {}, model = null) {
-  const mode = values.output_tokens === undefined ? "inherit" : values.output_tokens === 0 ? "unlimited" : "limited";
-  return `<div class="two-col"><div class="field"><label for="${prefix}-reasoning">Reasoning</label><select id="${prefix}-reasoning" name="${prefix}-reasoning">${reasoningOptions(values.reasoning || "", "Inherit", model)}</select></div><div class="field"><label for="${prefix}-output-mode">Output limit</label><select id="${prefix}-output-mode" name="${prefix}-output-mode" data-output-mode="${prefix}">${["inherit","unlimited","limited"].map(v => `<option value="${v}" ${mode === v ? "selected" : ""}>${v === "inherit" ? "Inherit" : v === "unlimited" ? "Unlimited (no app cap)" : "Custom limit"}</option>`).join("")}</select><input id="${prefix}-output-tokens" name="${prefix}-output-tokens" aria-label="Custom output tokens" type="number" min="64" max="1048576" value="${values.output_tokens || 16384}" ${mode === "limited" ? "" : "hidden disabled"}></div></div>`;
+  const mode = values.output_tokens === undefined ? "inherit" : values.output_tokens === 0 ? "unlimited" : values.output_tokens === -1 ? "automatic" : "limited";
+  return `<div class="two-col"><div class="field"><label for="${prefix}-reasoning">Reasoning</label><select id="${prefix}-reasoning" name="${prefix}-reasoning">${reasoningOptions(values.reasoning || "", "Inherit", model)}</select></div><div class="field"><label for="${prefix}-output-mode">Output limit</label><select id="${prefix}-output-mode" name="${prefix}-output-mode" data-output-mode="${prefix}">${["inherit","automatic","unlimited","limited"].map(v => `<option value="${v}" ${mode === v ? "selected" : ""}>${v === "inherit" ? "Inherit" : v === "automatic" ? "Automatic (fit available context)" : v === "unlimited" ? "Unlimited (no app cap)" : "Custom limit"}</option>`).join("")}</select><input id="${prefix}-output-tokens" name="${prefix}-output-tokens" aria-label="Custom output tokens" type="number" min="64" max="1048576" value="${values.output_tokens > 0 ? values.output_tokens : 16384}" ${mode === "limited" ? "" : "hidden disabled"}></div></div>`;
 }
 function readInference(f, prefix) {
   const values = {}, mode = f.get(`${prefix}-output-mode`);
   if (mode === "unlimited") values.output_tokens = 0;
+  if (mode === "automatic") values.output_tokens = -1;
   if (mode === "limited") values.output_tokens = Number(f.get(`${prefix}-output-tokens`));
   if (f.get(`${prefix}-reasoning`)) values.reasoning = f.get(`${prefix}-reasoning`);
   return values;
@@ -938,14 +951,21 @@ function readInference(f, prefix) {
 function modelSettings(id) {
   const v = ui.view, m = structuredClone(v.config.models[id]);
   if (!m) return;
-  showDialog(`Model settings · ${m.name || m.model}`, `<form><p class="muted small">${esc(v.config.connections?.[m.connection]?.name || m.url)} · ${esc(m.model)}${m.context ? ` · reported context: ${m.context.toLocaleString()} tokens` : ""}</p><div class="field"><label for="model-name">Name in this project</label><input id="model-name" name="name" value="${esc(m.name || m.model)}" required></div>${inferenceFields("model", m, m)}<p class="muted small">Inherit uses the project output limit and the server’s default reasoning. Unlimited removes Iterauthor’s token cap; server limits still apply. Reasoning levels depend on the model. ${m.reasoning_options?.length ? "The listed reasoning options were reported by the server." : "This server does not report reasoning options; use its default unless you know which options the model supports."}</p><details><summary>Compatibility and tool support</summary><label class="check"><input name="tools" type="checkbox" ${m.tools ? "checked" : ""}>Allow use in tasks requiring tools</label><small>${m.tools_unverified ? "Tool capability has not been verified. The optional test checks a complete tool exchange." : "You can verify tool support with the optional test below."}</small><div class="field"><label for="token-field">Output limit parameter</label><select id="token-field" name="token_field"><option value="">API default</option>${["max_tokens","max_completion_tokens"].map(f => `<option ${m.token_field === f ? "selected" : ""}>${f}</option>`).join("")}</select></div><div class="field"><label for="reasoning-field">Reasoning parameter</label><select id="reasoning-field" name="reasoning_field"><option value="">API default</option><option value="reasoning_effort" ${m.reasoning_field === "reasoning_effort" ? "selected" : ""}>reasoning_effort</option><option value="chat_template_kwargs" ${m.reasoning_field === "chat_template_kwargs" ? "selected" : ""}>Chat template (llama.cpp / vLLM)</option></select></div></details><div id="probe-status" class="form-note" role="status"></div><div class="actions end"><button type="button" id="probe-model">Test model</button><button type="submit" class="primary">Save model settings</button></div></form>`);
+  showDialog(`Model settings · ${m.name || m.model}`, `<form><p class="muted small">${esc(v.config.connections?.[m.connection]?.name || m.url)} · ${esc(m.model)}${m.context ? ` · ${esc(m.context_source || "reported")} context: ${m.context.toLocaleString()} tokens` : ""}</p><div class="field"><label for="model-name">Name in this project</label><input id="model-name" name="name" value="${esc(m.name || m.model)}" required></div>${inferenceFields("model", m, m)}<p class="muted small">Inherit uses the project output limit and the server’s default reasoning. Automatic reserves estimated input space and adjusts each output allowance. Unlimited omits the output cap parameter; the server’s default may still impose a limit. Reasoning levels depend on the model. ${m.reasoning_options?.length ? "The listed reasoning options were reported by the server." : "This server does not report reasoning options; use its default unless you know which options the model supports."}</p><details><summary>Compatibility and tool support</summary><label class="check"><input name="tools" type="checkbox" ${m.tools ? "checked" : ""}>Allow use in tasks requiring tools</label><small>${m.tools_unverified ? "Tool capability has not been verified. The optional test checks a complete tool exchange." : "You can verify tool support with the optional test below."}</small><div class="field"><label for="token-field">Output limit parameter</label><select id="token-field" name="token_field"><option value="">API default</option>${["max_tokens","max_completion_tokens"].map(f => `<option ${m.token_field === f ? "selected" : ""}>${f}</option>`).join("")}</select></div><div class="field"><label for="reasoning-field">Reasoning parameter</label><select id="reasoning-field" name="reasoning_field"><option value="">API default</option><option value="reasoning_effort" ${m.reasoning_field === "reasoning_effort" ? "selected" : ""}>reasoning_effort</option><option value="chat_template_kwargs" ${m.reasoning_field === "chat_template_kwargs" ? "selected" : ""}>Chat template (llama.cpp / vLLM)</option></select></div></details><div id="probe-status" class="form-note" role="status"></div><div class="actions end"><button type="button" id="probe-model">Test model</button><button type="submit" class="primary">Save model settings</button></div></form>`);
   let testResult;
-  const candidate = f => ({...m, name:f.get("name"), tools:f.has("tools"), token_field:f.get("token_field"), reasoning_field:f.get("reasoning_field"), reasoning:"", output_tokens:undefined, ...readInference(f,"model")});
+  $("#dialog form").addEventListener("change", event => {
+    if (["model-reasoning", "reasoning-field", "token-field"].includes(event.target.id)) {
+      testResult = undefined;
+      $("#probe-status").textContent = "Settings changed since the last test. Test again to verify this configuration.";
+    }
+  });
+  const candidate = f => ({...m, name:f.get("name"), tools:f.has("tools"), tools_override:m.tools_override, token_field:f.get("token_field"), reasoning_field:f.get("reasoning_field"), reasoning:"", output_tokens:undefined, ...readInference(f,"model")});
   $("#probe-model").onclick = async () => {
     const button = $("#probe-model"), status = $("#probe-status");
     button.disabled = true; status.textContent = "Testing text and a complete tool exchange…";
     try {
       const value = candidate(new FormData($("#dialog form")));
+      testResult = undefined;
       const result = await api("/api/models/probe", value);
       if (!button.isConnected) return;
       testResult = result;
@@ -957,7 +977,10 @@ function modelSettings(id) {
   };
   bindForm(async f => {
     const value = candidate(f);
-    if (testResult) value.tools_unverified = false;
+    if (testResult || value.tools !== m.tools || (m.tools_unverified && value.tools)) {
+      value.tools_override = value.tools;
+      value.tools_unverified = false;
+    }
     await command("save-model", {id, connection:value, expected:v.configVersion});
     renderModels();
   });
@@ -1007,7 +1030,7 @@ function renderSettings() {
       )
       .join(
         "",
-      )}</div><div class="field"><label for="project-output-mode">Output tokens per call</label><select id="project-output-mode" name="project-output-mode" data-output-mode="project"><option value="unlimited" ${c.limits.output_tokens === 0 ? "selected" : ""}>Unlimited (no app cap)</option><option value="limited" ${c.limits.output_tokens > 0 ? "selected" : ""}>Custom limit</option></select><input id="project-output-tokens" name="project-output-tokens" aria-label="Custom output tokens" type="number" min="64" max="1048576" value="${c.limits.output_tokens || 16384}" ${c.limits.output_tokens ? "" : "hidden disabled"}><small>Unlimited leaves output length to the model server. Server limits and context capacity still apply. Model and task settings can override this limit.</small></div><label class="check"><input name="automatic" type="checkbox" ${c.generate_after_editing ? "checked" : ""}>Draft missing or invalidated prose when I finish editing</label><div class="actions"><button type="submit" class="primary" data-write>Save settings</button><button type="button" data-action="finish-editing" data-write>Finish editing</button></div></form></div><div class="card"><h3>Project files</h3><p class="muted small"><code>${esc(ui.view.directory)}</code></p><p class="small muted">Your outlines and wiki remain Markdown files. Pause generation before external edits, then reload.</p><button data-action="reload" data-write>Reload project files</button></div>`;
+      )}</div><div class="field"><label for="project-output-mode">Output tokens per call</label><select id="project-output-mode" name="project-output-mode" data-output-mode="project"><option value="automatic" ${c.limits.output_tokens === -1 ? "selected" : ""}>Automatic (fit available context)</option><option value="unlimited" ${c.limits.output_tokens === 0 ? "selected" : ""}>Unlimited (no app cap)</option><option value="limited" ${c.limits.output_tokens > 0 ? "selected" : ""}>Custom limit</option></select><input id="project-output-tokens" name="project-output-tokens" aria-label="Custom output tokens" type="number" min="64" max="1048576" value="${c.limits.output_tokens > 0 ? c.limits.output_tokens : 16384}" ${c.limits.output_tokens > 0 ? "" : "hidden disabled"}><small>Automatic budgets by task and reported context size, with an estimated input allowance. Unlimited leaves output length to the model server; its configured limit still applies. Model and task settings can override this limit.</small></div><label class="check"><input name="automatic" type="checkbox" ${c.generate_after_editing ? "checked" : ""}>Draft missing or invalidated prose when I finish editing</label><div class="actions"><button type="submit" class="primary" data-write>Save settings</button><button type="button" data-action="finish-editing" data-write>Finish editing</button></div></form></div><div class="card"><h3>Project files</h3><p class="muted small"><code>${esc(ui.view.directory)}</code></p><p class="small muted">Your outlines and wiki remain Markdown files. Pause generation before external edits, then reload.</p><button data-action="reload" data-write>Reload project files</button></div>`;
   const form = $("#settings-form");
   form.dataset.version = ui.view.configVersion;
   form.addEventListener("input", () => (ui.settingsDirty = true));
@@ -1029,7 +1052,7 @@ async function saveSettings() {
     next = structuredClone(ui.view.config);
   for (const key of Object.keys(next.limits))
     next.limits[key] = Number(f.get(key));
-  next.limits.output_tokens = f.get("project-output-mode") === "unlimited" ? 0 : Number(f.get("project-output-tokens"));
+  next.limits.output_tokens = f.get("project-output-mode") === "unlimited" ? 0 : f.get("project-output-mode") === "automatic" ? -1 : Number(f.get("project-output-tokens"));
   next.generate_after_editing = f.has("automatic");
   await command("config", {
     config: next,
@@ -1040,6 +1063,15 @@ async function saveSettings() {
   ui.settingsDirty = false;
   renderSettings();
   notice("Project settings saved.");
+}
+
+function callBudgets(run) {
+  const calls = (run.trace || []).filter(t => !t.tool && t.response?.budget);
+  if (!calls.length) return "";
+  return `<details open><summary>Settings used for each call</summary>${calls.map(t => {
+    const b=t.response.budget, r=t.response;
+    return `<div class="review"><strong>${esc(t.stage)} · ${esc(ui.view.config.models[t.model]?.name || t.model)}</strong><p class="small">Reasoning: ${esc(t.options?.reasoning || "server default")} · output: ${b.output_tokens === 0 ? "Unlimited (server default)" : b.output_tokens.toLocaleString()+" tokens"}${b.requested === -1 ? " (Automatic)" : b.requested > b.output_tokens ? ` (requested ${b.requested.toLocaleString()})` : ""}<br>Estimated input: ${b.estimated_input_tokens.toLocaleString()} tokens${b.context ? ` · ${esc(b.context_source || "reported")} context: ${b.context.toLocaleString()}` : ""}</p><p class="small muted">${esc(b.note)}</p>${r.input_tokens !== undefined || r.output_tokens !== undefined ? `<p class="small">Server usage: ${r.input_tokens ?? "unknown"} input · ${r.output_tokens ?? "unknown"} output${r.reasoning_tokens !== undefined ? ` · ${r.reasoning_tokens} reasoning` : ""}</p>` : ""}</div>`;
+  }).join("")}</details>`;
 }
 
 async function inspectRun(id) {
@@ -1055,7 +1087,7 @@ async function inspectRun(id) {
   }
   showDialog(
     `${title(run.target)} · ${run.kind}`,
-    `<div class="row spread">${badge(invalid ? "Invalidated" : run.status)}<span class="muted small">${run.calls} calls · ${run.reported_tokens} reported tokens</span></div>${run.error ? `<p class="error-box">${esc(run.error)}</p>` : ""}${run.demo ? '<p class="form-note">Synthetic demo output and reviews.</p>' : ""}${run.text ? `<div class="prose-preview" style="margin-top:20px">${esc(run.text)}</div>` : ""}${(run.candidates || []).map((candidate, index) => `<section class="card" style="margin-top:20px"><h3>Candidate ${index + 1}</h3><div class="prose-preview">${esc(candidate.text)}</div>${review("Consistency", candidate.consistency)}${review("Style", candidate.style)}<button class="primary" data-use-run="${id}" data-index="${index}" ${invalid || ui.view.busy ? "disabled" : ""}>Use this candidate</button></section>`).join("")}${edits}<div class="actions" style="margin-top:20px">${run.kind === "outline" && run.text ? `<button class="primary" data-import="${id}" ${invalid || ui.view.busy ? "disabled" : ""}>Import into outline</button>` : ""}${run.edits?.length ? `<button class="primary" data-apply="${id}" ${invalid || ui.view.busy ? "disabled" : ""}>Apply proposed edits</button>` : ""}<button data-invalidate-run="${id}" ${invalid || ui.view.busy ? "disabled" : ""}>Invalidate this result</button></div><details><summary>Exact context, prompts, and tool calls</summary><pre>${esc(run.context || "")}\n\n${esc(JSON.stringify(run.trace || [], null, 2))}</pre></details>`,
+    `<div class="row spread">${badge(invalid ? "Invalidated" : run.status)}<span class="muted small">${run.calls} calls · ${run.reported_tokens} reported tokens</span></div>${run.error ? `<p class="error-box">${esc(run.error)}</p>` : ""}${run.demo ? '<p class="form-note">Synthetic demo output and reviews.</p>' : ""}${run.text ? `<div class="prose-preview" style="margin-top:20px">${esc(run.text)}</div>` : ""}${(run.candidates || []).map((candidate, index) => `<section class="card" style="margin-top:20px"><h3>Candidate ${index + 1}</h3><div class="prose-preview">${esc(candidate.text)}</div>${review("Consistency", candidate.consistency)}${review("Style", candidate.style)}<button class="primary" data-use-run="${id}" data-index="${index}" ${invalid || ui.view.busy ? "disabled" : ""}>Use this candidate</button></section>`).join("")}${edits}<div class="actions" style="margin-top:20px">${run.kind === "outline" && run.text ? `<button class="primary" data-import="${id}" ${invalid || ui.view.busy ? "disabled" : ""}>Import into outline</button>` : ""}${run.edits?.length ? `<button class="primary" data-apply="${id}" ${invalid || ui.view.busy ? "disabled" : ""}>Apply proposed edits</button>` : ""}<button data-invalidate-run="${id}" ${invalid || ui.view.busy ? "disabled" : ""}>Invalidate this result</button></div>${callBudgets(run)}<details><summary>Exact context, prompts, and tool calls</summary><pre>${esc(run.context || "")}\n\n${esc(JSON.stringify(run.trace || [], null, 2))}</pre></details>`,
   );
 }
 

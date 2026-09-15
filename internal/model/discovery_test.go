@@ -212,3 +212,77 @@ func TestProbeCancellationIsNotTextOnlySuccess(t *testing.T) {
 		t.Fatalf("cancellation not propagated: %v", err)
 	}
 }
+
+func TestNativeMetadataForLoadedAliasesAndLocalServers(t *testing.T) {
+	for _, provider := range []string{"LM Studio", "Ollama", "llama.cpp"} {
+		t.Run(provider, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/v1/models":
+					fmt.Fprint(w, `{"data":[{"id":"alias"}]}`)
+				case provider == "LM Studio" && r.URL.Path == "/api/v1/models":
+					fmt.Fprint(w, `{"models":[{"key":"file-key","type":"llm","max_context_length":262144,"loaded_instances":[{"id":"alias","config":{"context_length":8192}}],"capabilities":{"trained_for_tool_use":true,"reasoning":{"allowed_options":["off","on"]}}}]}`)
+				case provider == "Ollama" && r.URL.Path == "/api/tags":
+					fmt.Fprint(w, `{"models":[{"model":"alias"}]}`)
+				case provider == "Ollama" && r.URL.Path == "/api/show":
+					var body map[string]string
+					_ = json.NewDecoder(r.Body).Decode(&body)
+					if body["model"] != "alias" {
+						t.Errorf("wrong model %v", body)
+					}
+					fmt.Fprint(w, `{"capabilities":["completion","tools","thinking"],"model_info":{"qwen3.context_length":131072}}`)
+				case provider == "Ollama" && r.URL.Path == "/api/ps":
+					fmt.Fprint(w, `{"models":[{"model":"alias","context_length":8192}]}`)
+				case provider == "llama.cpp" && r.URL.Path == "/props":
+					fmt.Fprint(w, `{"default_generation_settings":{"n_ctx":8192}}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			c, err := NewHTTP().Discover(context.Background(), Endpoint{URL: srv.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.Provider != provider {
+				t.Fatalf("wrong provider %+v", c)
+			}
+			var m AvailableModel
+			for _, found := range c.Models {
+				if found.ID == "alias" {
+					m = found
+				}
+			}
+			if m.Context != 8192 || m.ContextSource != "loaded" {
+				t.Fatalf("loaded context lost: %+v", m)
+			}
+			if provider != "llama.cpp" && (m.Tools == nil || !*m.Tools || len(m.Reasoning) != 2) {
+				t.Fatalf("alias metadata lost: %+v", m)
+			}
+		})
+	}
+}
+
+func TestProbeAcceptsAndCompletesMultipleValidTools(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var body struct{ Messages []Message }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if calls == 2 {
+			fmt.Fprint(w, `{"choices":[{"finish_reason":"tool_calls","message":{"tool_calls":[{"id":"a","type":"function","function":{"name":"connection_check","arguments":"{\"value\":\"iterauthor\"}"}},{"id":"b","type":"function","function":{"name":"connection_check","arguments":"{\"value\":\"iterauthor\"}"}}]}}]}`)
+			return
+		}
+		if calls == 3 {
+			if len(body.Messages) != 5 || body.Messages[3].ToolCallID != "a" || body.Messages[4].ToolCallID != "b" {
+				t.Errorf("missing tool results: %+v", body.Messages)
+			}
+		}
+		fmt.Fprint(w, `{"choices":[{"finish_reason":"stop","message":{"content":"Ready"}}]}`)
+	}))
+	defer srv.Close()
+	result, err := NewHTTP().Probe(context.Background(), project.Model{Model: "local", URL: srv.URL, Context: 8192})
+	if err != nil || !result.Tools || calls != 3 {
+		t.Fatalf("false negative: %+v %v calls=%d", result, err, calls)
+	}
+}

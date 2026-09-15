@@ -222,7 +222,7 @@ func TestGenerationUsesInheritedInferenceForEachStage(t *testing.T) {
 				t.Error("style override not applied")
 			}
 		default:
-			if m.Reasoning != "low" || tokens != 0 {
+			if m.Reasoning != "low" || tokens != 32768 {
 				t.Error("unrelated stage inherited prose settings")
 			}
 		}

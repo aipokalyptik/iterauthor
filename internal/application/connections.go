@@ -69,7 +69,7 @@ func (s *Service) modelConfig() project.Config {
 			continue
 		}
 		for _, found := range state.Catalog.Models {
-			if strings.Contains(strings.ToLower(found.Kind), "embed") {
+			if !model.WritingModel(found) {
 				continue
 			}
 			id := project.ModelID(connection, found.ID)
@@ -78,8 +78,18 @@ func (s *Service) modelConfig() project.Config {
 			}
 			m, exists := c.Models[id]
 			if !exists {
-				m = project.Model{Name: found.Name, Model: found.ID, Connection: connection, Tools: found.Tools == nil || *found.Tools, ToolsUnverified: found.Tools == nil}
+				m = project.Model{Name: found.Name, Model: found.ID, Connection: connection, Tools: found.Tools != nil && *found.Tools, ToolsUnverified: found.Tools == nil}
 			}
+			if m.ToolsOverride != nil {
+				m.Tools = *m.ToolsOverride
+				m.ToolsUnverified = false
+			} else if found.Tools != nil {
+				m.Tools = *found.Tools
+				m.ToolsUnverified = false
+			} else if m.ToolsUnverified {
+				m.Tools = false
+			}
+			m.ContextSource, m.MaxContext = found.ContextSource, found.MaxContext
 			m.Context, m.ReasoningOptions = found.Context, append([]string(nil), found.Reasoning...)
 			if con.Provider == "" {
 				m.Provider = state.Catalog.Provider

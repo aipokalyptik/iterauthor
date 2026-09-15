@@ -4,7 +4,7 @@ September 14, 2026. Development host: macOS arm64, Go 1.27.0. Source declares Go
 
 ## Automated checks
 
-The full test suite across six packages passed with the race detector, followed by `go vet ./...`. The suite ran through `make test`; targeted application tests were rerun after tightening catalog snapshot isolation. Each package has a 60-second test timeout; UI waits and fake network startup have shorter bounds.
+The full test suite across six packages passed with the race detector, followed by `go vet ./...`. The suite ran through `make test`; subsequent targeted checks covered metadata refresh, automatic budgets, and separate connection/model saves. Each package has a 60-second test timeout; UI waits and fake network startup have shorter bounds.
 
 - File store: private-note exclusion, leaf-to-parent conversion, inherited settings/attachments, stale external saves, invalid tree reload, single-process locking, failed-open cleanup, protected authored prose, stale candidate rejection, and changes discovered after restart.
 - Change classification: setup/planning saves need no prose review; active prose and retained draft candidates do. Operational configuration changes preserve candidate/proposal freshness, while writing inputs and effective model selections request review. External operational edits still require Reload. Restart resolves the three obsolete model-setup prompts without changing the project or duplicating history; unchanged legacy cached-run fingerprints survive upgrade. No-op configuration saves produce no decisions.
@@ -30,7 +30,7 @@ The actual embedded interface was exercised in the in-app browser at 1280×720, 
 - Inspect the desktop layout and compact navigation. Check browser console errors during the completed workflow.
 - Against a delayed local HTTP fixture, send an assistant message on a single-point outline, inspect the active stage and elapsed time in both workspace and assistant, then return an empty token-limited reply. Verify persistent failure details and Retry message. Retry returns a visible outline reply. A separate edit session invokes `propose_edit`; inspecting and applying it replaces the intended outline with seven bullet points. No hosted or local LLM is called by this fixture.
 
-These are functional interaction checks, not an author usability study. Model fixture outputs and metadata are synthetic; no paid or local LLM was contacted. The discovery and capability tests establish protocol behavior against fixtures, not the truth of every server's reported metadata.
+These are functional interaction checks, not an author usability study. Model fixture outputs and metadata are synthetic; those fixture checks did not call an LLM. Separate live checks are recorded below. The discovery and capability tests establish protocol behavior against fixtures, not the truth of every server's reported metadata.
 
 ## Release checks
 
@@ -43,7 +43,7 @@ The preceding 0.1 PTY checks also covered a zero-directory-argument launch from 
 ## Not established by these checks
 
 - Actual iTerm → SSH → Debian operation, SSH tunnel configuration, or behavior of a specific tmux setup.
-- Live LM Studio, Ollama, llama.cpp, or hosted model quality/compatibility. No endpoint or credentials were supplied for those trials. Use Test model and a small passage first.
+- Live Ollama, llama.cpp, or hosted model compatibility. Their contracts were checked with local HTTP fixtures. The LM Studio trial below covers only the named local configurations, not all architectures or server versions.
 - Improved fiction quality, novel-scale continuity, lower author effort, accessibility, or crash-atomic multi-file transactions.
 
 Those are trial results to collect, not claims inferred from passing software tests.
@@ -54,3 +54,13 @@ Those are trial results to collect, not claims inferred from passing software te
 - Application tests exercise authenticated catalog refreshes, additions/removals, offline cache retention, restart recovery, stale responses after connection edits, detached metadata views, and selection from an already-open form. Refreshing does not run inference or modify author configuration versions.
 - Engine tests exercise a complete draft/review workflow with different inherited settings per stage and an unlimited operation deadline, checking the actual model/client arguments and retained trace options.
 - Browser checks cover connection creation, model selection, reported reasoning choices, settings persistence, and assistant submission against a controlled HTTP API. Captured request parameters verify reasoning off and omitted token caps. Fixtures verify request construction and app behavior, not real-model writing quality or whether a third-party server honors a setting.
+
+
+## Budget and compatibility gap fixes
+
+- Automatic budgets account for tool schemas and expanding tool history within an 8,192-token loaded context. Tests cover stage allowances with reasoning off, Unlimited omission, overfull context rejection, and retained whitespace/filtered/malformed responses.
+- Discovery fixtures cover LM Studio aliases with a 262,144-token model maximum but an 8,192-token loaded instance, Ollama capabilities and loaded context, and llama.cpp `/props`. Capabilities refresh on saved models while explicit author tool overrides survive. Unselected rows do not become authored configuration during unrelated saves.
+- Service/API regressions cover changing a shared connection through its own command, saving model settings without rewriting credentials/URL, rejecting unsupported inherited reasoning, and rejecting null outline entries without panic. Multi-call tool probes now complete every valid tool result; they no longer falsely reject two valid calls.
+- A real local LM Studio trial used the already-downloaded Qwen3 Coder 30B MLX 4-bit model, loaded with 8,192 context under `iterauthor-compat-test`. The browser Test model operation passed text and a complete tool exchange. A single-outline assistant request produced seven bullet points after a search tool and a second model call. The inspector showed output allowances of 6,382 and 6,205, estimated inputs of 786 and 963, and actual server inputs of 519 and 601. The reply is evidence of operation, not a judgment of fiction quality or factual accuracy.
+- Browser checks inspected loaded-context labels, saved Unlimited, confirmed new-project Automatic, and read settings/usage per call. The original project tab and source files were not used for the trial. Test servers and loaded test models were stopped after verification.
+- A second live LM Studio trial used the downloaded Qwen3.6 40B GGUF IQ2_M reasoning model at 8,192 context. The API advertised Off/On. A request with reasoning Off returned `Ready`, no reasoning text, and zero reported reasoning tokens. This establishes that the configured control worked for this instance; it does not verify every provider/template.

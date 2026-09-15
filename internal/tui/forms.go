@@ -380,7 +380,7 @@ func (u *UI) limitsDialog() {
 	}
 	add("Draft attempts (1–10)", &c.Limits.Drafts)
 	add("Total model calls (1–200)", &c.Limits.Calls)
-	add("Output tokens per call (0 = unlimited)", &c.Limits.OutputTokens)
+	add("Output tokens (-1 = auto, 0 = unlimited)", &c.Limits.OutputTokens)
 	add("Input characters per call", &c.Limits.ContextChars)
 	add("Minutes per operation (0 = unlimited)", &c.Limits.Minutes)
 	f.AddCheckbox("Generate when editing is finished", c.AutoGenerate, func(v bool) { c.AutoGenerate = v })

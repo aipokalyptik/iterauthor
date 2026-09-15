@@ -38,10 +38,18 @@ func (s *Service) SaveConfig(c project.Config, description, target, expectedVers
 		// selections against the current catalog without altering other edits.
 		c = c.Clone()
 		live := s.modelConfig()
+		if c.Models == nil {
+			c.Models = map[string]project.Model{}
+		}
+		keep := map[string]bool{}
+		for id := range s.store.Config.Models {
+			keep[id] = true
+		}
 		if c.Connections == nil {
 			c.Connections = map[string]project.Connection{}
 		}
 		add := func(id string) {
+			keep[id] = true
 			if _, ok := c.Models[id]; ok {
 				return
 			}
@@ -57,8 +65,32 @@ func (s *Service) SaveConfig(c project.Config, description, target, expectedVers
 			add(id)
 		}
 		for _, n := range c.Nodes {
+			if n == nil {
+				return fmt.Errorf("outline node cannot be null")
+			}
 			for _, id := range n.Models {
 				add(id)
+			}
+		}
+		// Unselected discovery rows remain in the catalog cache, not project.json.
+		for id := range c.Models {
+			if !keep[id] {
+				if _, found := live.Models[id]; found {
+					delete(c.Models, id)
+				}
+			}
+		}
+		if err := c.Validate(); err != nil {
+			return err
+		}
+		for node := range c.Nodes {
+			for _, role := range append(append([]string{}, project.Roles...), "advice", "edit") {
+				id, _ := c.ResolveModel(node, role)
+				if current, ok := live.Models[id]; ok {
+					if err := current.ValidateReasoning(c.InferenceFor(node, role, id).Reasoning); err != nil {
+						return err
+					}
+				}
 			}
 		}
 		return s.store.SaveConfig(c, description, target)
@@ -259,12 +291,12 @@ func (s *Service) validateConversation(c project.Conversation) error {
 	if s.store.Config.Nodes[c.Target] == nil && s.store.Config.Knowledge[c.Target] == nil {
 		return fmt.Errorf("conversation scope no longer exists")
 	}
-	m, ok := s.store.Config.Models[c.Model]
+	m, ok := s.modelConfig().Models[c.Model]
 	if !ok {
 		return fmt.Errorf("unknown conversation model")
 	}
-	if !m.Tools {
-		return fmt.Errorf("interactive research and editing require a model with tools")
+	if !m.Tools || m.ToolsUnverified {
+		return fmt.Errorf("interactive research and editing require tool support; test or explicitly enable tools in Model settings")
 	}
 	return nil
 }

@@ -68,6 +68,12 @@ func TestConnectionCatalogRefreshPreservesSelectionsAndCache(t *testing.T) {
 		t.Fatal("unknown tools advertised as verified")
 	}
 	c := v.Config
+	yes := true
+	chosen := c.Models[ref]
+	chosen.Tools = true
+	chosen.ToolsOverride = &yes
+	chosen.ToolsUnverified = false
+	c.Models[ref] = chosen
 	c.BaseModel = ref
 	check(t, core.SaveConfig(c, "Selected base model", c.Root, v.ConfigVersion))
 	before = core.View().ConfigVersion
@@ -86,7 +92,7 @@ func TestConnectionCatalogRefreshPreservesSelectionsAndCache(t *testing.T) {
 	}
 	// Catalog additions are selectable immediately, even from an already-open form.
 	oldForm := c.Clone()
-	oldForm.BaseModel = project.ModelID(id, "new-model")
+	oldForm.Defaults = map[string]string{"outline": project.ModelID(id, "new-model")}
 	check(t, core.SaveConfig(oldForm, "Choose new model", c.Root, v.ConfigVersion))
 	before = core.View().ConfigVersion
 	denied.Store(true)
@@ -207,5 +213,65 @@ func TestCatalogRefreshDoesNotBlockOrMutateActiveGeneration(t *testing.T) {
 	check(t, err)
 	if run.Error != "" || run.Status != "Proposal" {
 		t.Fatalf("refresh disturbed frozen job: %+v", run)
+	}
+}
+
+func TestCatalogMetadataRefreshAndModelSettingsStaySeparate(t *testing.T) {
+	var supportsTools atomic.Bool
+	supportsTools.Store(true)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []any{map[string]any{"id": "writer", "capabilities": map[string]any{"trained_for_tool_use": supportsTools.Load(), "reasoning": map[string]any{"allowed_options": []string{"off", "on"}}}}, map[string]any{"id": "unused"}}})
+	}))
+	defer server.Close()
+	p, err := project.Create(filepath.Join(t.TempDir(), "story"), "Test", false)
+	check(t, err)
+	core := application.New(p, model.NewHTTP(), false)
+	defer core.Shutdown(context.Background())
+	id, err := core.SaveConnection("", project.Connection{Name: "Local", URL: server.URL}, core.View().ConfigVersion)
+	check(t, err)
+	check(t, core.RefreshConnection(context.Background(), id))
+	ref := project.ModelID(id, "writer")
+	v := core.View()
+	v.Config.BaseModel = ref
+	check(t, core.SaveConfig(v.Config, "Select base", v.Config.Root, v.ConfigVersion))
+	if _, persisted := p.Config.Models[project.ModelID(id, "unused")]; persisted {
+		t.Fatal("ordinary save froze an unused catalog row")
+	}
+	m := core.View().Config.Models[ref]
+	m.URL = "http://stale-server/v1"
+	m.KeyEnv = "STALE_KEY"
+	m.Reasoning = "off"
+	_, err = core.SaveModel(ref, m, false, core.View().ConfigVersion)
+	check(t, err)
+	if con := core.View().Config.Connections[id]; con.URL != server.URL+"/v1" || con.KeyEnv != "" {
+		t.Fatal("model settings rewrote API credentials/address")
+	}
+	supportsTools.Store(false)
+	check(t, core.RefreshConnection(context.Background(), id))
+	if core.View().Config.Models[ref].Tools {
+		t.Fatal("saved model ignored changed capability metadata")
+	}
+	m = core.View().Config.Models[ref]
+	yes := true
+	m.ToolsOverride = &yes
+	_, err = core.SaveModel(ref, m, false, core.View().ConfigVersion)
+	check(t, err)
+	check(t, core.RefreshConnection(context.Background(), id))
+	if !core.View().Config.Models[ref].Tools {
+		t.Fatal("metadata overwrote explicit author override")
+	}
+	v = core.View()
+	v.Config.Inference = map[string]project.Inference{"prose": {Reasoning: "high"}}
+	if err := core.SaveConfig(v.Config, "Bad reasoning", v.Config.Root, v.ConfigVersion); err == nil {
+		t.Fatal("unsupported inherited reasoning was saved")
+	}
+	v = core.View()
+	v.Config.Nodes["story"] = nil
+	if err := core.SaveConfig(v.Config, "Invalid tree", "story", v.ConfigVersion); err == nil {
+		t.Fatal("nil outline saved")
 	}
 }

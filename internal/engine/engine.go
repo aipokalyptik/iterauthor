@@ -332,8 +332,8 @@ func (t *task) ask(stage, system, user, modelID string, tools []model.Tool) (str
 	if !ok {
 		return "", fmt.Errorf("unknown model %q", modelID)
 	}
-	if len(tools) > 0 && !m.Tools {
-		return "", fmt.Errorf("%s needs tool use; choose a capable model or disable automatic selection", stage)
+	if len(tools) > 0 && (!m.Tools || m.ToolsUnverified) {
+		return "", fmt.Errorf("%s needs verified tool support; test or explicitly enable tools in Model settings, or choose a capable model", stage)
 	}
 	if p := t.snapshot.Config.Prompt(t.run.Target, stage); p != "" && stage != "prose" && stage != "consistency" && stage != "style" {
 		user += "\nAUTHOR OPERATION INSTRUCTIONS:\n" + p
@@ -350,11 +350,16 @@ func (t *task) ask(stage, system, user, modelID string, tools []model.Tool) (str
 		if utf8.RuneCount(data) > t.snapshot.Config.Limits.ContextChars {
 			return "", fmt.Errorf("%s input exceeds Context characters limit; narrow context or raise the limit", stage)
 		}
+		budget, budgetErr := model.PlanOutput(stage, m, messages, tools, *options.OutputTokens)
+		if budgetErr != nil {
+			return "", budgetErr
+		}
 		t.run.Calls++
-		if err := t.checkpoint(fmt.Sprintf("%s · %s · call %d/%d", stage, m.Name, t.run.Calls, t.snapshot.Config.Limits.Calls)); err != nil {
+		if err := t.checkpoint(fmt.Sprintf("%s · %s · call %d/%d · %s", stage, m.Name, t.run.Calls, t.snapshot.Config.Limits.Calls, budget.Label())); err != nil {
 			return "", err
 		}
-		response, err := t.engine.Client.Complete(t.ctx, m, messages, tools, *options.OutputTokens)
+		response, err := t.engine.Client.Complete(t.ctx, m, messages, tools, budget.OutputTokens)
+		response.Budget = &budget
 		t.run.FinishReason = response.Finish
 		t.run.Trace = append(t.run.Trace, project.Trace{Stage: stage, Model: modelID, Options: options, Request: append([]model.Message(nil), messages...), Response: response})
 		t.run.Tokens += response.Tokens

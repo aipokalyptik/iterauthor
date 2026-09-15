@@ -25,6 +25,9 @@ type Model struct {
 	ReasoningField   string   `json:"reasoning_field,omitempty"`
 	OutputTokens     *int     `json:"output_tokens,omitempty"`
 	Context          int      `json:"context,omitempty"`
+	ContextSource    string   `json:"context_source,omitempty"`
+	MaxContext       int      `json:"max_context,omitempty"`
+	ToolsOverride    *bool    `json:"tools_override,omitempty"`
 	ReasoningOptions []string `json:"reasoning_options,omitempty"`
 	ToolsUnverified  bool     `json:"tools_unverified,omitempty"`
 	Name             string   `json:"name"`
@@ -44,7 +47,7 @@ type Limits struct {
 }
 
 func DefaultLimits() Limits {
-	return Limits{Drafts: 3, Calls: 24, OutputTokens: 0, ContextChars: 60000, Minutes: 20}
+	return Limits{Drafts: 3, Calls: 24, OutputTokens: -1, ContextChars: 60000, Minutes: 20}
 }
 
 type Attachment struct {

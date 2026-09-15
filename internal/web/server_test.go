@@ -163,9 +163,10 @@ func TestModelSetupDoesNotBlockFirstDraft(t *testing.T) {
 		t.Fatal("first draft did not finish")
 	}
 	v = core.View()
-	connection := v.Config.Models["writer"]
+	connectionID := v.Config.Models["writer"].Connection
+	connection := v.Config.Connections[connectionID]
 	connection.URL = "http://another-host:1234/v1"
-	request(t, srv, "/api/command", map[string]any{"action": "save-model", "id": "writer", "connection": connection, "expected": v.ConfigVersion}, 200)
+	request(t, srv, "/api/command", map[string]any{"action": "save-connection", "id": connectionID, "api": connection, "expected": v.ConfigVersion}, 200)
 	if core.View().ConfigVersion == v.ConfigVersion || len(core.View().State.Changes) != 0 {
 		t.Fatal("connection edit should update form version without requiring prose review")
 	}

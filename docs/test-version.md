@@ -42,7 +42,7 @@ All ancestor outline text is included conservatively. There is no separate pruni
 
 The writer produces a candidate, consistency reviews it using source tools, and style reviews it. Blocking findings go back to the writer. Each revision starts review again. Invalid/contradictory verdicts, missing explanations, truncation, timeouts, and exhausted budgets stop automatic acceptance. Preserved candidates can be explicitly chosen with findings.
 
-Defaults: three drafts per leaf, 24 total model calls per queue, no application output-token cap (server default), 60,000 input characters per call, and 20 minutes per operation/queue. Selection, tool continuations, and revisions all count. Tool output is bounded; each response permits at most eight tool calls. Input budgeting counts serialized message characters, not exact tokenizer tokens. There is no pricing estimate or dollar cap. Existing projects keep their saved limits. Output can be bounded per model, task, or outline; zero minutes permits unlimited operation time without disabling cancellation.
+Defaults: three drafts per leaf, 24 total model calls per queue, Automatic output budgeting, 60,000 input characters per call, and 20 minutes per operation/queue. Selection, tool continuations, and revisions all count. Tool output is bounded; each response permits at most eight tool calls. The character limit counts serialized messages. Automatic output budgeting also estimates input tokens including tool schemas/history, reserves a 1,024-token margin within reported context, and adjusts output per call. It is not an exact tokenizer. With reasoning off, stage allowances are 4,096 for selection/reviews, 8,192 for outlining/discussion/edits, and 16,384 for prose; enabled or unknown reasoning raises the allowance to 32,768 before context adjustment. Explicit output caps also respect estimated space; Unlimited bypasses the app output cap and leaves the provider default in force. There is no pricing estimate or dollar cap. Existing projects keep their saved limits. Output can be bounded per model, task, or outline; zero minutes permits unlimited operation time without disabling cancellation.
 
 Passing prose may replace prior generated prose. Manual prose requires explicit candidate selection. Invalidation preserves prior text and records. Working-manuscript exports mark incomplete or retained material.
 
@@ -74,3 +74,12 @@ Private notes are excluded from worker snapshots. Models have no arbitrary files
 - Browser and terminal interaction checks cover the main workflow. Accessibility, long authoring sessions, and actual iTerm/SSH forwarding to Debian still need trials.
 
 The experiment should measure whether an author can diagnose a poor passage, change a relevant source, and obtain a better draft without managing excessive configuration. That result should guide the next scheduler and interface work.
+
+
+### Model metadata and settings
+
+Connection addresses and credential references are edited only through the API connection form. Saving model settings cannot replace a shared connection. Discovered, unselected models stay in the replaceable catalog cache; selected models and explicit settings persist in project configuration. Metadata refreshes update capabilities and context without replacing explicit tool overrides or changing active generation snapshots.
+
+LM Studio loaded instance aliases inherit their underlying model's metadata and report loaded context separately from model maximum. Ollama discovery reads `/api/show` capabilities and `/api/ps` loaded context with bounded concurrency; llama.cpp discovery reads `/props`. Unknown tool support is not automatically admitted to research tasks: test it or explicitly enable it in Model settings. Reasoning options are checked against reported support at save and at inference. A response that reports reasoning despite Off is retained as a compatibility failure; servers that silently ignore settings without reporting usage cannot be verified this way.
+
+The result inspector lists each call's settings, planned allowance, input estimate, and provider-reported usage. These records describe the actual run even after future settings change. Catalog errors remain visible without discarding the last successful list.

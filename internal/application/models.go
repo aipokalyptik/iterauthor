@@ -100,11 +100,6 @@ func (s *Service) SaveModel(id string, m project.Model, base bool, expected stri
 		if m.Name == "" {
 			m.Name = m.Model
 		}
-		var err error
-		m.URL, err = model.APIBase(m.URL)
-		if err != nil {
-			return err
-		}
 		c := s.store.Config.WithConnections()
 		if id == "" {
 			id = project.NewID()
@@ -117,17 +112,33 @@ func (s *Service) SaveModel(id string, m project.Model, base bool, expected stri
 			if !ok {
 				return fmt.Errorf("unknown API connection")
 			}
-			con.URL, con.KeyEnv = m.URL, m.KeyEnv
-			c.Connections[m.Connection] = con
+			m.URL, m.KeyEnv = con.URL, con.KeyEnv
 			if con.Provider != "" {
 				m.Provider = con.Provider
 			}
+		} else {
+			var err error
+			m.URL, err = model.APIBase(m.URL)
+			if err != nil {
+				return err
+			}
+		}
+		if current, ok := s.modelConfig().Models[id]; ok && current.Connection == m.Connection && current.Model == m.Model {
+			m.Context, m.ContextSource, m.MaxContext = current.Context, current.ContextSource, current.MaxContext
+			m.ReasoningOptions = append([]string(nil), current.ReasoningOptions...)
+		}
+		if m.ToolsOverride != nil {
+			m.Tools = *m.ToolsOverride
+			m.ToolsUnverified = false
+		}
+		if err := m.ValidateReasoning(m.Reasoning); err != nil {
+			return err
 		}
 		c.Models[id] = m
 		if base {
 			c.BaseModel = id
 		}
-		return s.store.SaveConfig(c, "Changed model connection", c.Root)
+		return s.store.SaveConfig(c, "Changed model settings", c.Root)
 	})
 	return id, err
 }

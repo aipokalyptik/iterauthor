@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -17,7 +19,7 @@ type Connection struct {
 }
 
 type Inference struct {
-	// nil inherits; zero removes the application's output cap.
+	// nil inherits; -1 selects automatic budgeting; zero removes the app cap.
 	OutputTokens *int `json:"output_tokens,omitempty"`
 	// Empty inherits. "default" explicitly restores the server default.
 	Reasoning string `json:"reasoning,omitempty"`
@@ -89,16 +91,16 @@ func (c Config) InferenceFor(node, role, modelID string) Inference {
 	return result
 }
 
-func ValidOutputTokens(n int) bool { return n == 0 || n >= 64 && n <= 1048576 }
+func ValidOutputTokens(n int) bool { return n == -1 || n == 0 || n >= 64 && n <= 1048576 }
 func (v Inference) Validate() error {
 	if v.OutputTokens != nil && !ValidOutputTokens(*v.OutputTokens) {
-		return fmt.Errorf("output tokens must be 0 (unlimited) or 64–1048576")
+		return fmt.Errorf("output tokens must be -1 (automatic), 0 (unlimited), or 64–1048576")
 	}
-	switch v.Reasoning {
-	case "", "default", "off", "on", "none", "minimal", "low", "medium", "high", "xhigh":
-	default:
-		return fmt.Errorf("unknown reasoning setting %q", v.Reasoning)
+	// Providers can advertise new named levels without an application upgrade.
+	if len(v.Reasoning) > 64 || strings.ContainsAny(v.Reasoning, " \t\r\n") {
+		return fmt.Errorf("invalid reasoning setting %q", v.Reasoning)
 	}
+
 	return nil
 }
 
@@ -108,4 +110,26 @@ func WorkContext(ctx context.Context, minutes int) (context.Context, context.Can
 		return context.WithCancel(ctx)
 	}
 	return context.WithTimeout(ctx, time.Duration(minutes)*time.Minute)
+}
+
+func (m Model) ValidateReasoning(value string) error {
+	if value == "" || value == "default" {
+		return nil
+	}
+	if err := (Inference{Reasoning: value}).Validate(); err != nil {
+		return err
+	}
+	normalize := func(s string) string {
+		if s == "off" {
+			return "none"
+		}
+		if s == "on" {
+			return "medium"
+		}
+		return s
+	}
+	if len(m.ReasoningOptions) > 0 && !slices.ContainsFunc(m.ReasoningOptions, func(s string) bool { return normalize(s) == normalize(value) }) {
+		return fmt.Errorf("%s does not report support for reasoning %s; choose a supported option in Model settings", m.Name, value)
+	}
+	return nil
 }

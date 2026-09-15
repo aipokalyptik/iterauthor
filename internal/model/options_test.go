@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/aipokalyptik/iterauthor/internal/project"
@@ -43,7 +44,11 @@ func TestReasoningAndUnlimitedRequestContract(t *testing.T) {
 			}))
 			defer srv.Close()
 			response, err := NewHTTP().Complete(context.Background(), project.Model{URL: srv.URL, Model: "test", Provider: tc.provider, Reasoning: tc.reasoning, ReasoningField: tc.field}, nil, nil, tc.tokens)
-			if err != nil {
+			if tc.reasoning == "off" {
+				if err == nil || !strings.Contains(err.Error(), "did not honor") {
+					t.Fatalf("ignored reasoning Off not diagnosed: %v", err)
+				}
+			} else if err != nil {
 				t.Fatal(err)
 			}
 			if response.InputTokens == nil || *response.InputTokens != 50 || response.OutputTokens == nil || *response.OutputTokens != 25 || response.ReasoningTokens == nil || *response.ReasoningTokens != 20 || response.Message.ReasoningContent == "" {
