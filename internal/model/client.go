@@ -62,6 +62,16 @@ func NewHTTP() *HTTP {
 	}}}
 }
 func (h *HTTP) Complete(ctx context.Context, m project.Model, messages []Message, tools []Tool, maxTokens int) (Response, error) {
+	return h.complete(ctx, m, messages, tools, maxTokens, nil)
+}
+
+// CompleteStream uses the same single request and validation as Complete. Servers
+// returning an ordinary JSON response still work; no retry spends a second call.
+func (h *HTTP) CompleteStream(ctx context.Context, m project.Model, messages []Message, tools []Tool, maxTokens int, emit func(Delta)) (Response, error) {
+	return h.complete(ctx, m, messages, tools, maxTokens, emit)
+}
+
+func (h *HTTP) complete(ctx context.Context, m project.Model, messages []Message, tools []Tool, maxTokens int, emit func(Delta)) (Response, error) {
 	var result Response
 	if strings.TrimSpace(m.Model) == "" {
 		return result, fmt.Errorf("connect a writing model in Models")
@@ -73,7 +83,10 @@ func (h *HTTP) Complete(ctx context.Context, m project.Model, messages []Message
 	if !strings.HasSuffix(u.Path, "/chat/completions") {
 		u.Path = strings.TrimRight(u.Path, "/") + "/chat/completions"
 	}
-	payload := map[string]any{"model": m.Model, "messages": messages, "stream": false}
+	payload := map[string]any{"model": m.Model, "messages": messages, "stream": emit != nil}
+	if emit != nil {
+		payload["stream_options"] = map[string]bool{"include_usage": true}
+	}
 	field := m.TokenField
 	if field == "" {
 		field = "max_tokens"
@@ -126,6 +139,14 @@ func (h *HTTP) Complete(ctx context.Context, m project.Model, messages []Message
 		return result, fmt.Errorf("model request: %w", err)
 	}
 	defer resp.Body.Close()
+	if emit != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 && strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
+		result, err := readStream(resp.Body, emit)
+		result.Budget = &budget
+		if err != nil {
+			return result, err
+		}
+		return validateResponse(m, result)
+	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 32*1024*1024+1))
 	if err != nil {
 		return result, err
@@ -182,29 +203,37 @@ func (h *HTTP) Complete(ctx context.Context, m project.Model, messages []Message
 		}
 	}
 	result.Message = Message{Role: "assistant", Content: content, ToolCalls: c.Message.ToolCalls, ReasoningContent: c.Message.ReasoningContent, Reasoning: c.Message.Reasoning}
-	if c.Finish == "length" {
+	if emit != nil {
+		emit(Delta{Text: content})
+	}
+	return validateResponse(m, result)
+}
+
+func validateResponse(m project.Model, result Response) (Response, error) {
+	content := result.Message.Content
+	if result.Finish == "length" {
 		if strings.TrimSpace(content) == "" {
 			return result, fmt.Errorf("model reached its output-token limit before returning any visible text; adjust Output tokens or reasoning in Model settings or Project settings (or the server limit when unlimited), then retry")
 		}
 		return result, fmt.Errorf("model output reached its token limit; partial output retained; increase output_tokens or narrow the task")
 	}
-	if c.Finish == "content_filter" {
+	if result.Finish == "content_filter" {
 		return result, fmt.Errorf("model output was blocked by the provider's content filter; partial output retained")
 	}
-	if c.Finish != "" && c.Finish != "stop" && c.Finish != "tool_calls" {
-		return result, fmt.Errorf("model ended with unsupported finish reason %q; inspect the retained response", c.Finish)
+	if result.Finish != "" && result.Finish != "stop" && result.Finish != "tool_calls" {
+		return result, fmt.Errorf("model ended with unsupported finish reason %q; inspect the retained response", result.Finish)
 	}
-	if (m.Reasoning == "off" || m.Reasoning == "none") && ((result.ReasoningTokens != nil && *result.ReasoningTokens > 0) || strings.TrimSpace(c.Message.ReasoningContent) != "") {
+	if (m.Reasoning == "off" || m.Reasoning == "none") && ((result.ReasoningTokens != nil && *result.ReasoningTokens > 0) || strings.TrimSpace(result.Message.ReasoningContent) != "") {
 		return result, fmt.Errorf("the model produced reasoning although reasoning is Off; this server/model did not honor the selected reasoning control; check Model settings and the server")
 	}
 	seen := map[string]bool{}
-	for _, call := range c.Message.ToolCalls {
+	for _, call := range result.Message.ToolCalls {
 		if call.ID == "" || seen[call.ID] || call.Type != "function" || call.Function.Name == "" || !json.Valid([]byte(call.Function.Arguments)) {
 			return result, fmt.Errorf("model returned an invalid or duplicate tool call; inspect the retained response")
 		}
 		seen[call.ID] = true
 	}
-	if strings.TrimSpace(content) == "" && len(c.Message.ToolCalls) == 0 {
+	if strings.TrimSpace(content) == "" && len(result.Message.ToolCalls) == 0 {
 		return result, fmt.Errorf("model returned empty text and no tool calls")
 	}
 	return result, nil

@@ -49,6 +49,11 @@ type Work struct {
 	Run          string `json:"run,omitempty"`
 	Status       string `json:"status"`
 	Calls        int    `json:"calls"`
+	Stage        string `json:"stage,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Phase        string `json:"phase,omitempty"`
+	Preview      string `json:"preview,omitempty"`
+	LastActivity string `json:"lastActivity,omitempty"`
 }
 
 type Service struct {

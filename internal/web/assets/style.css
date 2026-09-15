@@ -793,6 +793,27 @@ code {
 .turn.author {
   background: #e6eee3;
 }
+.live-reply { border: 1px solid #b2c3a8; }
+.reply-activity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  margin-bottom: 10px;
+  white-space: normal;
+}
+.activity-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #63794e;
+  animation: activity-pulse 1.4s ease-in-out infinite;
+}
+@keyframes activity-pulse { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .activity-dot { animation: none; } }
+#reply-detail { display: block; margin-top: 10px; color: var(--muted); white-space: normal; }
+#chat-jump { align-self: center; flex-shrink: 0; margin-bottom: 10px; font-size: 12px; }
 .turn strong {
   display: block;
   font-size: 10px;

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/aipokalyptik/iterauthor/internal/engine"
 	"github.com/aipokalyptik/iterauthor/internal/project"
@@ -163,9 +164,30 @@ func (s *Service) work(ctx context.Context, snapshot project.Snapshot, job Job, 
 		s.workInfo.Target = job.Target
 		s.workInfo.Status = "Running"
 		s.workInfo.Run, s.workInfo.Calls = "", 0
+		s.workInfo.Stage, s.workInfo.Model, s.workInfo.Phase, s.workInfo.Preview = "", "", "", ""
 		s.changed()
 		s.mu.Unlock()
+		var lastNotice time.Time
+		var preview strings.Builder
 		e := engine.Engine{Client: s.client, Demo: s.demo,
+			Live: func(event engine.Live) {
+				s.mu.Lock()
+				defer s.mu.Unlock()
+				w := s.workInfo
+				announce := event.Reset || w.Phase != event.Phase || time.Since(lastNotice) >= 100*time.Millisecond
+				if event.Reset {
+					preview.Reset()
+				}
+				preview.WriteString(event.Text)
+				w.Stage, w.Model, w.Phase = event.Stage, event.Model, event.Phase
+				w.Preview, w.LastActivity = preview.String(), project.Now()
+				// Keep live text in memory. The final response is persisted once;
+				// listeners get coalesced updates without a disk write per token.
+				if announce {
+					lastNotice = time.Now()
+					s.changed()
+				}
+			},
 			Save: func(r project.Run) error {
 				s.mu.Lock()
 				defer s.mu.Unlock()

@@ -17,7 +17,15 @@ type Engine struct {
 	Client   model.Client
 	Demo     bool
 	Progress func(string)
+	Live     func(Live)
 	Save     func(project.Run) error
+}
+
+// Live reports request activity independently of persistence or any interface.
+// Text is public conversation output only, never context summaries or reasoning.
+type Live struct {
+	Stage, Model, Phase, Text string
+	Reset                     bool
 }
 type task struct {
 	engine   Engine
@@ -338,47 +346,89 @@ func (t *task) ask(stage, system, user, modelID string, tools []model.Tool) (str
 	if p := t.snapshot.Config.Prompt(t.run.Target, stage); p != "" && stage != "prose" && stage != "consistency" && stage != "style" {
 		user += "\nAUTHOR OPERATION INSTRUCTIONS:\n" + p
 	}
+	conversation := stage == "advice" || stage == "edit"
+	var prior strings.Builder
 	messages := []model.Message{{Role: "system", Content: system}, {Role: "user", Content: user}}
 	for {
 		if err := t.ctx.Err(); err != nil {
-			return "", err
+			return prior.String(), err
 		}
 		if t.run.Calls >= t.snapshot.Config.Limits.Calls {
-			return "", fmt.Errorf("model-call budget exhausted (%d calls)", t.run.Calls)
+			return prior.String(), fmt.Errorf("model-call budget exhausted (%d calls)", t.run.Calls)
 		}
 		data, _ := json.Marshal(messages)
 		if utf8.RuneCount(data) > t.snapshot.Config.Limits.ContextChars {
-			return "", fmt.Errorf("%s input exceeds Context characters limit; narrow context or raise the limit", stage)
+			return prior.String(), fmt.Errorf("%s input exceeds Context characters limit; narrow context or raise the limit", stage)
 		}
 		budget, budgetErr := model.PlanOutput(stage, m, messages, tools, *options.OutputTokens)
 		if budgetErr != nil {
-			return "", budgetErr
+			return prior.String(), budgetErr
 		}
 		t.run.Calls++
 		if err := t.checkpoint(fmt.Sprintf("%s · %s · call %d/%d · %s", stage, m.Name, t.run.Calls, t.snapshot.Config.Limits.Calls, budget.Label())); err != nil {
-			return "", err
+			return prior.String(), err
 		}
-		response, err := t.engine.Client.Complete(t.ctx, m, messages, tools, budget.OutputTokens)
+		emit := func(phase, text string, reset bool) {
+			if t.engine.Live != nil {
+				t.engine.Live(Live{Stage: stage, Model: m.Name, Phase: phase, Text: text, Reset: reset})
+			}
+		}
+		emit("waiting", prior.String(), true)
+		var response model.Response
+		var err error
+		if client, ok := t.engine.Client.(model.StreamingClient); ok {
+			response, err = client.CompleteStream(t.ctx, m, messages, tools, budget.OutputTokens, func(delta model.Delta) {
+				phase := "receiving"
+				if delta.Thinking {
+					phase = "thinking"
+				}
+				if delta.Tool {
+					phase = "tool"
+				}
+				text := ""
+				if delta.Text != "" {
+					phase = "writing"
+					if conversation {
+						text = delta.Text
+					}
+				}
+				if delta.Text != "" || delta.Thinking || delta.Tool {
+					emit(phase, text, false)
+				}
+			})
+		} else {
+			response, err = t.engine.Client.Complete(t.ctx, m, messages, tools, budget.OutputTokens)
+		}
+		emit("finishing", "", false)
 		response.Budget = &budget
 		t.run.FinishReason = response.Finish
 		t.run.Trace = append(t.run.Trace, project.Trace{Stage: stage, Model: modelID, Options: options, Request: append([]model.Message(nil), messages...), Response: response})
 		t.run.Tokens += response.Tokens
+		text := response.Message.Content
+		if conversation {
+			prior.WriteString(text)
+			text = prior.String()
+		}
 		if err != nil {
-			return response.Message.Content, err
+			return text, err
 		}
 		if len(response.Message.ToolCalls) == 0 {
-			return response.Message.Content, nil
+			return text, nil
+		}
+		if conversation && response.Message.Content != "" {
+			prior.WriteString("\n\n")
 		}
 		if len(tools) == 0 {
-			return "", fmt.Errorf("model requested tools in a text-only operation")
+			return prior.String(), fmt.Errorf("model requested tools in a text-only operation")
 		}
 		if len(response.Message.ToolCalls) > 8 {
-			return "", fmt.Errorf("model requested more than eight tools in one response")
+			return prior.String(), fmt.Errorf("model requested more than eight tools in one response")
 		}
 		messages = append(messages, response.Message)
 		for _, call := range response.Message.ToolCalls {
+			emit("tool", "", false)
 			if err = t.ctx.Err(); err != nil {
-				return "", err
+				return prior.String(), err
 			}
 			allowed := false
 			for _, def := range tools {
@@ -393,7 +443,7 @@ func (t *task) ask(stage, system, user, modelID string, tools []model.Tool) (str
 			t.run.Trace = append(t.run.Trace, project.Trace{Stage: stage, Model: modelID, Tool: call.Function.Name, Request: call.Function.Arguments, Response: result})
 			messages = append(messages, model.Message{Role: "tool", ToolCallID: call.ID, Content: result})
 			if err := t.checkpoint(stage + " · tool " + call.Function.Name); err != nil {
-				return "", err
+				return prior.String(), err
 			}
 		}
 	}

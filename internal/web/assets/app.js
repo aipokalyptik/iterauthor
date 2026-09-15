@@ -43,6 +43,8 @@ const ui = {
   sendingSince: "",
   connectionLost: false,
   dismissedWork: "",
+  pendingMessage: null,
+  chatScrollID: "",
 };
 let noticeTimer, draftTimer;
 let pendingDraft = Promise.resolve();
@@ -206,13 +208,29 @@ async function refresh() {
       ui.refreshAgain = false;
       const old = ui.view;
       ui.view = await api("/api/state");
+      ui.connectionLost = false;
       if (!ui.selected) ui.selected = ui.view.config.root;
       if (!old) {
         renderShell();
         await renderMain();
+        // Reattach to existing work/history. Observing a reply never resends it.
+        let saved;
+        try { saved = sessionStorage.getItem(chatStorageKey()); } catch {}
+        const conversation = ui.view.busy && ui.view.work?.conversation ? ui.view.work.conversation : saved || ui.view.work?.conversation;
+        if (conversation) {
+          try {
+            await loadConversation(conversation);
+            ui.assistant = true;
+            renderAssistant();
+          } catch (err) { report(err); }
+        }
         continue;
       }
-      renderShell();
+      if (old.busy && ui.view.busy && old.configVersion === ui.view.configVersion && old.work?.run === ui.view.work?.run) {
+        // Token updates must not rebuild navigation or interrupt the composer.
+        renderWorkStatus();
+        renderAssistantStatus();
+      } else renderShell();
       const finished = old.busy && !ui.view.busy;
       if (ui.conversation && (finished || old.lastRun !== ui.view.lastRun)) {
         await loadConversation(ui.conversation.id);
@@ -251,7 +269,11 @@ async function refresh() {
         await renderDocument();
     } while (ui.refreshAgain);
   })()
-    .catch(report)
+    .catch(err => {
+      ui.connectionLost = true;
+      renderAssistantStatus();
+      report(err);
+    })
     .finally(() => (ui.refreshPromise = null));
   return ui.refreshPromise;
 }
@@ -333,26 +355,78 @@ function renderWorkStatus() {
   box.classList.toggle("work-failed", !v.busy && ["Failed", "Needs review", "Canceled"].includes(w?.status));
   box.innerHTML = `<span>${esc(v.canceling ? "Stopping the current operation…" : v.progress || "Working…")}${v.busy && w?.started ? ` · <span data-elapsed="${esc(w.started)}">${elapsed(w.started)}</span> elapsed` : ""}${v.queue?.length ? ` · ${v.queue.length} queued` : ""}</span><div class="actions">${v.busy ? `<button data-action="cancel" ${v.canceling ? "disabled" : ""}>Stop operation</button>` : `${w?.run ? `<button data-run="${esc(w.run)}">Inspect result</button>` : ""}${w?.conversation === ui.conversation?.id && ["Failed", "Canceled"].includes(w?.status) ? '<button data-action="retry-message">Retry message</button>' : ""}<button data-action="dismiss-work">Dismiss</button>`}</div>`;
 }
+function chatStorageKey() {
+  return "iterauthor:conversation:" + ui.view.directory;
+}
+function nearChatBottom() {
+  const turns = $("#chat-turns");
+  return !turns || turns.scrollHeight - turns.clientHeight - turns.scrollTop < 60;
+}
+function scrollChatToReply() {
+  const turns = $("#chat-turns");
+  if (turns) turns.scrollTop = turns.scrollHeight;
+  const jump = $("#chat-jump");
+  if (jump) jump.hidden = true;
+}
 function renderAssistantStatus() {
-  const box = $("#assistant-status");
-  if (!box || !ui.view) return;
-  const w = ui.view.work;
-  const active = ui.view.busy && w?.conversation === ui.conversation?.id;
-  const last = ui.conversation?.turns?.at(-1);
-  const interrupted = last?.role === "author" && !active && !ui.sending && !ui.connectionLost;
-  box.hidden = !ui.sending && !active && !ui.sendError && !ui.connectionLost && !interrupted;
+  const box = $("#assistant-status"), turns = $("#chat-turns");
+  if (!box || !ui.view || !turns) return;
+  const w = ui.view.work, c = ui.conversation;
+  const ownWork = Boolean(c && w?.conversation === c.id);
+  const active = ui.view.busy && ownWork;
+  const last = c?.turns?.at(-1);
+  const finalizing = ownWork && w.run && !w.finished && last?.role === "author" && !(c.turns || []).some(t => t.run === w.run);
+  const sending = ui.sending && ui.pendingMessage?.id === c?.id;
+  const pending = active || sending || finalizing;
+  const interrupted = last?.role === "author" && !pending && !ui.connectionLost;
+  const follow = nearChatBottom();
+  let changed = false;
+  const pendingAuthor = sending && (c.turns || []).length <= ui.pendingMessage.turnCount;
+  let author = $("#pending-message");
+  if (pendingAuthor && !author) {
+    author = document.createElement("div");
+    author.id = "pending-message";
+    author.className = "turn author";
+    author.innerHTML = '<strong>You · sending</strong><span></span>';
+    author.querySelector("span").textContent = ui.pendingMessage.text;
+    turns.append(author);
+    changed = true;
+  } else if (!pendingAuthor && author) { author.remove(); changed = true; }
+  let live = $("#live-reply");
+  if (pending) {
+    if (!live) {
+      live = document.createElement("div");
+      live.id = "live-reply";
+      live.className = "turn live-reply";
+      live.innerHTML = '<strong>Assistant</strong><div id="reply-text"></div><div class="reply-activity" role="status" aria-live="polite"><span class="activity-dot" aria-hidden="true"></span><span id="reply-phase"></span></div><small id="reply-detail"></small><button type="button" data-action="cancel">Stop reply</button>';
+      turns.append(live);
+      changed = true;
+    }
+    const phase = ui.connectionLost ? "Reconnecting to your reply…" : ui.view.canceling ? "Stopping reply…" : !active ? (sending ? "Sending your message…" : "Saving reply…") :
+      w.stage === "knowledge" ? "Looking up world references…" :
+      w.stage === "outline-context" ? "Checking outline context…" :
+      ({ waiting: "Waiting for the model…", thinking: "Model is thinking…", tool: "Working with source tools…", writing: "Writing reply…", receiving: "Receiving response…", finishing: "Finishing response…" }[w.phase] || "Preparing your request…");
+    if ($("#reply-phase").textContent !== phase) $("#reply-phase").textContent = phase;
+    const preview = active || finalizing ? w.preview || "" : "";
+    if ($("#reply-text").textContent !== preview) { $("#reply-text").textContent = preview; changed = true; }
+    const since = active || finalizing ? w.started : ui.sendingSince;
+    const quiet = active && w.lastActivity && Date.now() - Date.parse(w.lastActivity) > 15000;
+    $("#reply-detail").textContent = `${active && w.model ? w.model + " · " : ""}${elapsed(since)} elapsed. ${ui.connectionLost ? "Your request is not being resent. Updates resume when connected." : quiet ? "No new output recently. Still waiting; you can stop this reply." : "Updates appear here automatically."}`;
+    const stop = $("[data-action=cancel]", live);
+    stop.hidden = !active;
+    stop.disabled = ui.view.canceling;
+  } else if (live) { live.remove(); changed = true; }
+  box.hidden = !ui.sendError && !ui.connectionLost && !interrupted;
   box.classList.toggle("error-box", Boolean(ui.sendError) || interrupted);
-  box.textContent = ui.sendError || (ui.sending
-    ? `Sending message… ${elapsed(ui.sendingSince)} elapsed`
-    : ui.connectionLost
-      ? "Connection interrupted. Reconnecting and checking the operation status…"
-      : active
-        ? `${ui.view.canceling ? "Stopping…" : ui.view.progress || "Working…"} · ${elapsed(w.started)} elapsed`
-        : interrupted ? "No completed reply is recorded. Check Activity for an interrupted run before retrying." : "");
+  box.textContent = ui.sendError || (ui.connectionLost ? "Connection interrupted. Reconnecting automatically; your message will not be resent." : interrupted ? "No completed reply is recorded. Check Activity for an interrupted run before retrying." : "");
   const send = $("#chat-form button[type=submit]");
   if (send) {
     send.disabled = ui.view.busy || ui.sending;
-    send.textContent = ui.sending ? "Sending…" : active ? "Working…" : "Send";
+    send.textContent = sending ? "Sending…" : active ? "Replying…" : "Send";
+  }
+  if (changed) {
+    if (follow) scrollChatToReply();
+    else if ($("#chat-jump")) $("#chat-jump").hidden = false;
   }
 }
 
@@ -1081,6 +1155,9 @@ async function inspectRun(id) {
 }
 
 function renderAssistant() {
+  const sameConversation = ui.chatScrollID === ui.conversation?.id;
+  const follow = !sameConversation || nearChatBottom();
+  const scrollTop = $("#chat-turns")?.scrollTop || 0;
   const focused = document.activeElement?.id === "chat-input",
     selection = focused
       ? [$("#chat-input").selectionStart, $("#chat-input").selectionEnd]
@@ -1089,7 +1166,7 @@ function renderAssistant() {
   box.hidden = !ui.assistant;
   if (!ui.assistant) return;
   const c = ui.conversation;
-  box.innerHTML = `<div class="assistant-head"><h3>Writing assistant</h3><button data-action="assistant" aria-label="Close writing assistant">×</button></div>${c ? `<div class="assistant-scope">${esc(c.mode === "edit" ? "Source edits" : "Discussion")} · <strong>${esc(title(c.target))}</strong><br>${esc(ui.view.config.models[c.model]?.name || c.model)}<br>${c.mode === "edit" ? "Changes are proposed for you to review and apply." : "Replies appear here; sources stay unchanged."}</div>` : '<p class="muted small">Discuss an outline, develop an idea, or ask for help diagnosing a passage.</p>'}<div class="assistant-toolbar"><button data-action="discuss" data-write>New conversation</button><button data-action="sessions">Saved conversations</button>${c ? '<button data-action="chat-model" data-write>Model</button>' : ""}</div><div class="turns" id="chat-turns">${c ? (c.turns || []).map((turn) => `<div class="turn ${turn.role === "author" ? "author" : ""}"><strong>${turn.role === "author" ? "You" : "Assistant"}</strong>${turn.status && turn.status !== "Available" ? badge(turn.status) : ""}${esc(turn.text)}${turn.run ? `<button data-run="${esc(turn.run)}">${turn.proposals ? "Review proposed edits" : "Inspect result"}</button>` : ""}${turn === c.turns.at(-1) && ["Failed", "Canceled"].includes(turn.status) ? '<button data-action="retry-message">Retry message</button><button data-nav="settings">Project settings</button>' : ""}</div>`).join("") : '<div class="empty small">Start a conversation with the outline or entry you are viewing.</div>'}</div><div id="assistant-status" role="status" aria-live="polite" hidden></div>${c ? `<form class="chat-compose" id="chat-form"><label for="chat-input" class="small">Message</label><textarea id="chat-input" rows="4" placeholder="What would you like to work on?">${esc(ui.draft)}</textarea><div class="actions"><small>Ctrl+Enter / ⌘Enter sends</small><button type="submit" class="primary" ${ui.view.busy ? "disabled" : ""}>Send</button></div></form>` : ""}`;
+  box.innerHTML = `<div class="assistant-head"><h3>Writing assistant</h3><button data-action="assistant" aria-label="Close writing assistant">×</button></div>${c ? `<div class="assistant-scope">${esc(c.mode === "edit" ? "Source edits" : "Discussion")} · <strong>${esc(title(c.target))}</strong><br>${esc(ui.view.config.models[c.model]?.name || c.model)}<br>${c.mode === "edit" ? "Changes are proposed for you to review and apply." : "Replies appear here; sources stay unchanged."}</div>` : '<p class="muted small">Discuss an outline, develop an idea, or ask for help diagnosing a passage.</p>'}<div class="assistant-toolbar"><button data-action="discuss" data-write>New conversation</button><button data-action="sessions">Saved conversations</button>${c ? '<button data-action="chat-model" data-write>Model</button>' : ""}</div><div class="turns" id="chat-turns">${c ? (c.turns || []).map((turn) => `<div class="turn ${turn.role === "author" ? "author" : ""}"><strong>${turn.role === "author" ? "You" : "Assistant"}</strong>${turn.status && turn.status !== "Available" ? badge(turn.status) : ""}${esc(turn.text)}${turn.run ? `<button data-run="${esc(turn.run)}">${turn.proposals ? "Review proposed edits" : "Inspect result"}</button>` : ""}${turn === c.turns.at(-1) && ["Failed", "Canceled"].includes(turn.status) ? '<button data-action="retry-message">Retry message</button><button data-nav="settings">Project settings</button>' : ""}</div>`).join("") : '<div class="empty small">Start a conversation with the outline or entry you are viewing.</div>'}</div><button type="button" id="chat-jump" hidden>Jump to latest reply ↓</button><div id="assistant-status" role="status" aria-live="polite" hidden></div>${c ? `<form class="chat-compose" id="chat-form"><label for="chat-input" class="small">Message</label><textarea id="chat-input" rows="4" placeholder="What would you like to work on?">${esc(ui.draft)}</textarea><div class="actions"><small>Ctrl+Enter / ⌘Enter sends</small><button type="submit" class="primary" ${ui.view.busy ? "disabled" : ""}>Send</button></div></form>` : ""}`;
   if (c) {
     const input = $("#chat-input");
     input.oninput = () => {
@@ -1113,8 +1190,12 @@ function renderAssistant() {
     $$("[data-write]", box).forEach(
       (b) => (b.disabled = ui.view.busy || ui.sending),
     );
+    ui.chatScrollID = c.id;
     const turns = $("#chat-turns");
-    if (turns.lastElementChild) turns.scrollTop = turns.lastElementChild.offsetTop;
+    turns.scrollTop = follow ? turns.scrollHeight : scrollTop;
+    $("#chat-jump").onclick = scrollChatToReply;
+    $("#chat-jump").hidden = follow;
+    turns.onscroll = () => { if (nearChatBottom()) $("#chat-jump").hidden = true; };
     if (focused) {
       input.focus();
       input.setSelectionRange(...selection);
@@ -1137,7 +1218,10 @@ async function sendAssistant(id, message) {
   clearTimeout(draftTimer);
   ui.sending = true;
   ui.sendingSince = new Date().toISOString();
+  ui.pendingMessage = { id, text, turnCount: ui.conversation?.turns?.length || 0 };
+  ui.draft = followUp;
   renderAssistant();
+  scrollChatToReply();
   try {
     await pendingDraft;
     await api("/api/command", { action: "send", id, text });
@@ -1154,6 +1238,7 @@ async function sendAssistant(id, message) {
     report(err);
   } finally {
     ui.sending = false;
+    ui.pendingMessage = null;
     renderAssistant();
   }
 }
@@ -1166,6 +1251,7 @@ async function loadConversation(id) {
     ui.sendError = "";
   }
   ui.conversation = c;
+  try { sessionStorage.setItem(chatStorageKey(), c.id); } catch {}
   ui.savedDraft = c.draft || "";
   renderAssistant();
 }
@@ -1206,6 +1292,7 @@ function newConversation() {
       model: f.get("model"),
     });
     ui.conversation = c;
+    try { sessionStorage.setItem(chatStorageKey(), c.id); } catch {}
     ui.conversationLoad++;
     ui.savedDraft = "";
     ui.draft = "";
@@ -1539,7 +1626,7 @@ window.addEventListener("beforeunload", (e) => {
   stream.addEventListener("change", () => refresh());
   stream.onopen = () => {
     ui.connectionLost = false;
-    $("#connection-state").textContent = "Connected to your project";
+    $("#connection-state").textContent = "Live updates connected";
     refresh().then(() => ui.conversation && loadConversation(ui.conversation.id)).catch(report);
   };
   stream.onerror = () => {
